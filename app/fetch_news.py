@@ -202,7 +202,9 @@ def _parse_article_detail(html_text):
     return summary, content, published_at
 
 
-def _target_range(year=None, months=12):
+def _target_range(year=None, months=12, start_date=None, end_date=None):
+    if start_date and end_date:
+        return start_date, end_date
     now = datetime.utcnow()
     if year:
         return datetime(year, 1, 1), datetime(year, 12, 31, 23, 59, 59)
@@ -210,10 +212,10 @@ def _target_range(year=None, months=12):
     return start, now
 
 
-def fetch_news(year=None, months=12, max_pages=None, max_items=None):
+def fetch_news(year=None, months=12, max_pages=None, max_items=None, start_date=None, end_date=None):
     max_pages = max_pages or DEFAULT_MAX_PAGES
     max_items = max_items or DEFAULT_MAX_ITEMS
-    start_date, end_date = _target_range(year=year, months=months)
+    start_date, end_date = _target_range(year=year, months=months, start_date=start_date, end_date=end_date)
 
     news_items = []
     seen_links = set()

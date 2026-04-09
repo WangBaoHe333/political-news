@@ -23,8 +23,15 @@ AUTO_SYNC_ON_STARTUP = os.getenv("AUTO_SYNC_ON_STARTUP", "0").lower() in {"1", "
 SYNC_LOCK = threading.Lock()
 
 
-def fetch_and_save_news(year=None, months=12, max_pages=None, max_items=None):
-    news_items = fetch_news(year=year, months=months, max_pages=max_pages, max_items=max_items)
+def fetch_and_save_news(year=None, months=12, max_pages=None, max_items=None, start_date=None, end_date=None):
+    news_items = fetch_news(
+        year=year,
+        months=months,
+        max_pages=max_pages,
+        max_items=max_items,
+        start_date=start_date,
+        end_date=end_date,
+    )
     saved_count = save_news_to_db(news_items)
     _set_app_state("last_sync_at", datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S"))
     _set_app_state("last_sync_result", f"本次抓取 {len(news_items)} 条，新增 {saved_count} 条。")
@@ -107,8 +114,14 @@ def _month_batches(total_months, batch_size=3):
     offset = 0
     while remaining > 0:
         current_batch = min(batch_size, remaining)
-        end = (now - timedelta(days=offset * 30)).replace(day=1)
-        start = (end - timedelta(days=(current_batch - 1) * 30)).replace(day=1)
+        batch_end_month = (now - timedelta(days=offset * 30)).replace(day=1)
+        batch_start_month = (batch_end_month - timedelta(days=(current_batch - 1) * 30)).replace(day=1)
+        if batch_end_month.month == 12:
+            next_month = batch_end_month.replace(year=batch_end_month.year + 1, month=1, day=1)
+        else:
+            next_month = batch_end_month.replace(month=batch_end_month.month + 1, day=1)
+        end = next_month - timedelta(seconds=1)
+        start = batch_start_month
         batches.append((start, end, current_batch))
         remaining -= current_batch
         offset += current_batch
@@ -128,7 +141,7 @@ def _run_batched_backfill(scope_label, total_months, batch_size=3, max_items=150
             for start, end, months in _month_batches(total_months, batch_size=batch_size):
                 label = f"{start.strftime('%Y-%m')} 至 {end.strftime('%Y-%m')}"
                 _set_app_state("sync_message", f"{scope_label}后台回填进行中：正在处理 {label}。")
-                result = fetch_and_save_news(months=months, max_items=max_items)
+                result = fetch_and_save_news(start_date=start, end_date=end, max_items=max_items)
                 completed += months
                 total_fetched += result["fetched"]
                 total_saved += result["saved"]
