@@ -18,3 +18,10 @@ class News(Base):
     published_at = Column(DateTime, index=True, nullable=False)
     year = Column(Integer, index=True, nullable=False)
     month = Column(Integer, index=True, nullable=False)
+
+
+class AppState(Base):
+    __tablename__ = "app_state"
+
+    key = Column(String(100), primary_key=True)
+    value = Column(Text, nullable=False, default="")
