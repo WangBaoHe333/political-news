@@ -20,9 +20,10 @@ DEFAULT_SOURCE = "gov_cn"
 DEFAULT_CATEGORY = "时政"
 LIST_BASE_URL = os.getenv("LIST_BASE_URL", "https://www.gov.cn/yaowen/")
 LIST_JSON_URL = os.getenv("LIST_JSON_URL", "https://www.gov.cn/yaowen/liebiao/YAOWENLIEBIAO.json")
+LIST_ARCHIVE_BASE_URL = os.getenv("LIST_ARCHIVE_BASE_URL", "https://www.gov.cn/yaowen/liebiao/")
 HTTP_TIMEOUT = int(os.getenv("HTTP_TIMEOUT_SECONDS", "30"))
 HTTP_RETRIES = int(os.getenv("HTTP_RETRIES", "2"))
-DEFAULT_MAX_PAGES = int(os.getenv("SYNC_MAX_PAGES", "60"))
+DEFAULT_MAX_PAGES = int(os.getenv("SYNC_MAX_PAGES", "260"))
 DEFAULT_MAX_ITEMS = int(os.getenv("SYNC_MAX_ITEMS", "400"))
 
 
@@ -45,6 +46,11 @@ def _fetch_url(url):
                 raise
             time.sleep(1.5 * (attempt + 1))
     raise last_error
+
+
+def _build_archive_url(page_number):
+    return urljoin(LIST_ARCHIVE_BASE_URL, f"home_{page_number}.htm")
+
 
 def _extract_date(text):
     normalized = text.replace("/", "-").replace(".", "-")
@@ -205,15 +211,31 @@ def _target_range(year=None, months=12):
 
 
 def fetch_news(year=None, months=12, max_pages=None, max_items=None):
+    max_pages = max_pages or DEFAULT_MAX_PAGES
     max_items = max_items or DEFAULT_MAX_ITEMS
     start_date, end_date = _target_range(year=year, months=months)
 
     news_items = []
+    seen_links = set()
+
+    def append_items(items):
+        for item in items:
+            if item["link"] in seen_links:
+                continue
+            seen_links.add(item["link"])
+            news_items.append(item)
+            if len(news_items) >= max_items:
+                return True
+        return False
+
     try:
         page_items = _load_json_feed()
     except (HTTPError, URLError, TimeoutError, OSError, json.JSONDecodeError) as exc:
         logger.warning("Failed to fetch json feed %s: %s", LIST_JSON_URL, exc)
-        return []
+        page_items = []
+
+    collected = []
+    oldest_seen = None
 
     for item in page_items:
         published_at = item["published_at"]
@@ -235,6 +257,8 @@ def fetch_news(year=None, months=12, max_pages=None, max_items=None):
         if published_at < start_date:
             continue
 
+        oldest_seen = published_at if oldest_seen is None else min(oldest_seen, published_at)
+
         try:
             article_html = _fetch_url(item["link"])
         except (HTTPError, URLError, TimeoutError, OSError) as exc:
@@ -248,10 +272,56 @@ def fetch_news(year=None, months=12, max_pages=None, max_items=None):
 
         item["summary"] = summary or item["title"]
         item["content"] = content or summary or item["title"]
-        news_items.append(item)
+        collected.append(item)
 
-        if len(news_items) >= max_items:
-            break
+    append_items(collected)
+
+    if (oldest_seen is None or oldest_seen > start_date) and len(news_items) < max_items:
+        for page_number in range(1, max_pages + 1):
+            archive_url = _build_archive_url(page_number)
+            try:
+                archive_html = _fetch_url(archive_url)
+            except (HTTPError, URLError, TimeoutError, OSError) as exc:
+                logger.warning("Failed to fetch archive page %s: %s", archive_url, exc)
+                continue
+
+            archive_items = _parse_list_page(archive_html, archive_url)
+            if not archive_items:
+                continue
+
+            page_collected = []
+            page_oldest = None
+            for item in archive_items:
+                published_at = item["published_at"]
+                if not published_at:
+                    continue
+                page_oldest = published_at if page_oldest is None else min(page_oldest, published_at)
+
+                if published_at > end_date:
+                    continue
+                if published_at < start_date:
+                    continue
+
+                try:
+                    article_html = _fetch_url(item["link"])
+                except (HTTPError, URLError, TimeoutError, OSError) as exc:
+                    logger.warning("Failed to fetch article %s: %s", item["link"], exc)
+                    article_html = ""
+
+                summary, content, detail_date = _parse_article_detail(article_html) if article_html else ("", "", None)
+                if detail_date:
+                    item["published_at"] = detail_date
+                    item["published"] = detail_date.strftime("%Y-%m-%d")
+
+                item["summary"] = summary or item["title"]
+                item["content"] = content or summary or item["title"]
+                page_collected.append(item)
+
+            if append_items(page_collected):
+                break
+
+            if page_oldest and page_oldest < start_date:
+                break
 
     news_items.sort(key=lambda item: item["published_at"], reverse=True)
     return news_items
