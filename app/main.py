@@ -1,5 +1,6 @@
 import logging
 import os
+import threading
 from collections import OrderedDict
 from datetime import datetime, timedelta
 from html import escape
@@ -19,6 +20,7 @@ logger = logging.getLogger(__name__)
 
 app = FastAPI(title="Political News")
 AUTO_SYNC_ON_STARTUP = os.getenv("AUTO_SYNC_ON_STARTUP", "0").lower() in {"1", "true", "yes", "on"}
+SYNC_LOCK = threading.Lock()
 
 
 def fetch_and_save_news(year=None, months=12, max_pages=None, max_items=None):
@@ -67,6 +69,54 @@ def _set_app_state(key, value):
         db.commit()
     finally:
         db.close()
+
+
+def _get_sync_status():
+    return {
+        "in_progress": _get_app_state("sync_in_progress", "0") == "1",
+        "scope": _get_app_state("sync_scope", ""),
+        "message": _get_app_state("sync_message", ""),
+        "started_at": _get_app_state("sync_started_at", ""),
+        "finished_at": _get_app_state("sync_finished_at", ""),
+        "last_result": _get_app_state("last_sync_result", ""),
+    }
+
+
+def _run_background_sync(scope_label, year=None, months=12, max_pages=None, max_items=None):
+    with SYNC_LOCK:
+        _set_app_state("sync_in_progress", "1")
+        _set_app_state("sync_scope", scope_label)
+        _set_app_state("sync_started_at", datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S"))
+        _set_app_state("sync_finished_at", "")
+        _set_app_state("sync_message", f"{scope_label}后台回填已启动，请稍候刷新进度。")
+        try:
+            result = fetch_and_save_news(year=year, months=months, max_pages=max_pages, max_items=max_items)
+            _set_app_state("sync_message", f"{scope_label}后台回填完成：抓取 {result['fetched']} 条，新增 {result['saved']} 条。")
+        except Exception as exc:
+            logger.exception("Background sync failed: %s", exc)
+            _set_app_state("sync_message", f"{scope_label}后台回填失败：{exc}")
+        finally:
+            _set_app_state("sync_finished_at", datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S"))
+            _set_app_state("sync_in_progress", "0")
+
+
+def _start_background_sync(scope_label, year=None, months=12, max_pages=None, max_items=None):
+    if _get_app_state("sync_in_progress", "0") == "1":
+        return False
+
+    worker = threading.Thread(
+        target=_run_background_sync,
+        kwargs={
+            "scope_label": scope_label,
+            "year": year,
+            "months": months,
+            "max_pages": max_pages,
+            "max_items": max_items,
+        },
+        daemon=True,
+    )
+    worker.start()
+    return True
 
 
 def _as_dict(news_items):
@@ -191,6 +241,7 @@ async def read_news(
     last_sync_at = _get_app_state("last_sync_at", "尚未同步")
     last_sync_result = sync_status or _get_app_state("last_sync_result", "")
     latest_published_at = _latest_news_date(news_items)
+    task_status = _get_sync_status()
 
     selected_year = str(year) if year else "近一年"
     range_label = "近一年（参照公务员时政常见考查周期）" if not year else f"{year}年"
@@ -214,6 +265,13 @@ async def read_news(
     sync_notice = ""
     if last_sync_result:
         sync_notice = f'<div class="sync-notice"><strong>最近同步：</strong>{escape(last_sync_result)}</div>'
+
+    sync_task_notice = ""
+    if task_status["message"]:
+        sync_task_notice = (
+            f'<div class="sync-notice"><strong>后台任务：</strong>{escape(task_status["message"])}'
+            f' 当前状态：{"进行中" if task_status["in_progress"] else "空闲"}。</div>'
+        )
 
     html_content = f"""
     <!DOCTYPE html>
@@ -393,17 +451,18 @@ async def read_news(
             <div class="actions">
               <form class="sync-form" method="get" action="/sync-view">
                 <input type="hidden" name="months" value="12" />
-                <button type="submit">同步近一年</button>
+                <button type="submit">后台同步近一年</button>
               </form>
               <form class="sync-form" method="get" action="/sync-view">
                 <input type="hidden" name="months" value="24" />
-                <button type="submit">同步近两年</button>
+                <button type="submit">后台同步近两年</button>
               </form>
               <form class="sync-form" method="get" action="/sync-view">
                 <input type="hidden" name="year" value="{datetime.utcnow().year}" />
-                <button type="submit">同步本年</button>
+                <button type="submit">后台同步本年</button>
               </form>
               <a class="action-link" href="#today-news">查看今日时政</a>
+              <a class="action-link" href="/sync-status">查看同步状态</a>
             </div>
           </div>
           <div class="facts">
@@ -413,6 +472,7 @@ async def read_news(
             <div class="fact"><strong>最近同步时间：</strong>{escape(last_sync_at)}（服务器记录）</div>
           </div>
           {sync_notice}
+          {sync_task_notice}
         </section>
 
         {empty_state}
@@ -464,14 +524,22 @@ async def sync_view(
     max_pages: Optional[int] = Query(default=None, ge=1, le=500),
     max_items: Optional[int] = Query(default=None, ge=1, le=1000),
 ):
-    result = fetch_and_save_news(year=year, months=months, max_pages=max_pages, max_items=max_items)
     scope = f"{year}年" if year else f"近{months}个月"
-    status = f"{scope}同步完成：抓取 {result['fetched']} 条，新增 {result['saved']} 条。"
+    started = _start_background_sync(scope, year=year, months=months, max_pages=max_pages, max_items=max_items)
+    if started:
+        status = f"{scope}后台同步已启动，请稍后刷新页面查看结果。"
+    else:
+        status = "已有后台同步任务在运行，请稍后刷新查看。"
     encoded_status = quote(status)
     redirect_url = f"/?sync_status={encoded_status}"
     if year:
         redirect_url = f"/?year={year}&sync_status={encoded_status}"
     return RedirectResponse(url=redirect_url, status_code=303)
+
+
+@app.get("/sync-status")
+async def sync_status():
+    return JSONResponse(_get_sync_status())
 
 
 @app.get("/api/news")
