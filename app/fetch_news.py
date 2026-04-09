@@ -16,7 +16,7 @@ logger = logging.getLogger(__name__)
 
 DEFAULT_SOURCE = "gov_cn"
 DEFAULT_CATEGORY = "时政"
-LIST_BASE_URL = os.getenv("LIST_BASE_URL", "https://www.gov.cn/xinwen/yaowen/")
+LIST_BASE_URL = os.getenv("LIST_BASE_URL", "https://www.gov.cn/yaowen/")
 HTTP_TIMEOUT = int(os.getenv("HTTP_TIMEOUT_SECONDS", "12"))
 DEFAULT_MAX_PAGES = int(os.getenv("SYNC_MAX_PAGES", "60"))
 DEFAULT_MAX_ITEMS = int(os.getenv("SYNC_MAX_ITEMS", "180"))
@@ -36,8 +36,8 @@ def _fetch_url(url):
 
 def _build_list_url(page_number):
     if page_number == 0:
-        return urljoin(LIST_BASE_URL, "home.htm")
-    return urljoin(LIST_BASE_URL, f"home_{page_number}.htm")
+        return urljoin(LIST_BASE_URL, "index.htm")
+    return urljoin(LIST_BASE_URL, f"index_{page_number + 1}.htm")
 
 
 def _extract_date(text):
@@ -58,24 +58,45 @@ def _parse_list_page(html_text, page_url):
     results = []
     seen_links = set()
 
+    def find_date_for_anchor(anchor):
+        candidates = []
+
+        next_text = []
+        for sibling in list(anchor.next_siblings)[:6]:
+            text = _normalize_text(getattr(sibling, "get_text", lambda *args, **kwargs: str(sibling))(" ", strip=True) if hasattr(sibling, "get_text") else str(sibling))
+            if text:
+                next_text.append(text)
+        if next_text:
+            candidates.append(" ".join(next_text))
+
+        for tag_name in ["li", "div", "section", "article", "ul"]:
+            container = anchor.find_parent(tag_name)
+            if container is not None:
+                candidates.append(_normalize_text(container.get_text(" ", strip=True)))
+
+        parent = anchor.parent
+        hops = 0
+        while parent is not None and hops < 6:
+            candidates.append(_normalize_text(parent.get_text(" ", strip=True)))
+            parent = parent.parent
+            hops += 1
+
+        for text in candidates:
+            published_at = _extract_date(text)
+            if published_at:
+                return published_at
+        return None
+
     for anchor in soup.find_all("a", href=True):
         href = urljoin(page_url, anchor["href"])
         title = _normalize_text(anchor.get_text(" ", strip=True))
         if "content_" not in href or not title or href in seen_links:
             continue
 
-        if "/xinwen/yaowen/" not in href and "/yaowen/" not in href and "/zhuanti/" not in href:
+        if "/yaowen/" not in href and "/zhuanti/" not in href:
             continue
 
-        published_at = None
-        container = anchor
-        for _ in range(5):
-            container = container.parent
-            if container is None:
-                break
-            published_at = _extract_date(container.get_text(" ", strip=True))
-            if published_at:
-                break
+        published_at = find_date_for_anchor(anchor)
 
         seen_links.add(href)
         results.append(
