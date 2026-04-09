@@ -100,6 +100,55 @@ def _run_background_sync(scope_label, year=None, months=12, max_pages=None, max_
             _set_app_state("sync_in_progress", "0")
 
 
+def _month_batches(total_months, batch_size=3):
+    now = datetime.utcnow().replace(day=1)
+    batches = []
+    remaining = total_months
+    offset = 0
+    while remaining > 0:
+        current_batch = min(batch_size, remaining)
+        end = (now - timedelta(days=offset * 30)).replace(day=1)
+        start = (end - timedelta(days=(current_batch - 1) * 30)).replace(day=1)
+        batches.append((start, end, current_batch))
+        remaining -= current_batch
+        offset += current_batch
+    return batches
+
+
+def _run_batched_backfill(scope_label, total_months, batch_size=3, max_items=150):
+    with SYNC_LOCK:
+        _set_app_state("sync_in_progress", "1")
+        _set_app_state("sync_scope", scope_label)
+        _set_app_state("sync_started_at", datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S"))
+        _set_app_state("sync_finished_at", "")
+        completed = 0
+        total_fetched = 0
+        total_saved = 0
+        try:
+            for start, end, months in _month_batches(total_months, batch_size=batch_size):
+                label = f"{start.strftime('%Y-%m')} 至 {end.strftime('%Y-%m')}"
+                _set_app_state("sync_message", f"{scope_label}后台回填进行中：正在处理 {label}。")
+                result = fetch_and_save_news(months=months, max_items=max_items)
+                completed += months
+                total_fetched += result["fetched"]
+                total_saved += result["saved"]
+                _set_app_state(
+                    "sync_message",
+                    f"{scope_label}后台回填进行中：已完成 {completed}/{total_months} 个月，累计抓取 {total_fetched} 条，新增 {total_saved} 条。",
+                )
+
+            final_message = f"{scope_label}后台回填完成：累计抓取 {total_fetched} 条，新增 {total_saved} 条。"
+            _set_app_state("sync_message", final_message)
+            _set_app_state("last_sync_at", datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S"))
+            _set_app_state("last_sync_result", final_message)
+        except Exception as exc:
+            logger.exception("Batched backfill failed: %s", exc)
+            _set_app_state("sync_message", f"{scope_label}后台回填失败：{exc}")
+        finally:
+            _set_app_state("sync_finished_at", datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S"))
+            _set_app_state("sync_in_progress", "0")
+
+
 def _start_background_sync(scope_label, year=None, months=12, max_pages=None, max_items=None):
     if _get_app_state("sync_in_progress", "0") == "1":
         return False
@@ -111,6 +160,24 @@ def _start_background_sync(scope_label, year=None, months=12, max_pages=None, ma
             "year": year,
             "months": months,
             "max_pages": max_pages,
+            "max_items": max_items,
+        },
+        daemon=True,
+    )
+    worker.start()
+    return True
+
+
+def _start_batched_backfill(scope_label, total_months, batch_size=3, max_items=150):
+    if _get_app_state("sync_in_progress", "0") == "1":
+        return False
+
+    worker = threading.Thread(
+        target=_run_batched_backfill,
+        kwargs={
+            "scope_label": scope_label,
+            "total_months": total_months,
+            "batch_size": batch_size,
             "max_items": max_items,
         },
         daemon=True,
@@ -457,6 +524,10 @@ async def read_news(
                 <input type="hidden" name="months" value="24" />
                 <button type="submit">后台同步近两年</button>
               </form>
+              <form class="sync-form" method="get" action="/backfill-view">
+                <input type="hidden" name="months" value="24" />
+                <button type="submit">分批回填近两年</button>
+              </form>
               <form class="sync-form" method="get" action="/sync-view">
                 <input type="hidden" name="year" value="{datetime.utcnow().year}" />
                 <button type="submit">后台同步本年</button>
@@ -540,6 +611,22 @@ async def sync_view(
 @app.get("/sync-status")
 async def sync_status():
     return JSONResponse(_get_sync_status())
+
+
+@app.get("/backfill-view")
+async def backfill_view(
+    months: int = Query(default=24, ge=1, le=36),
+    batch_size: int = Query(default=3, ge=1, le=6),
+    max_items: int = Query(default=150, ge=20, le=400),
+):
+    scope = f"近{months}个月分批回填"
+    started = _start_batched_backfill(scope, total_months=months, batch_size=batch_size, max_items=max_items)
+    if started:
+        status = f"{scope}已启动，每批 {batch_size} 个月。请稍后刷新页面查看进度。"
+    else:
+        status = "已有后台同步任务在运行，请稍后刷新查看。"
+    encoded_status = quote(status)
+    return RedirectResponse(url=f"/?sync_status={encoded_status}", status_code=303)
 
 
 @app.get("/api/news")
