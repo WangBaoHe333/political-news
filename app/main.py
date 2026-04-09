@@ -394,6 +394,10 @@ async def read_news(
                 <button type="submit">同步近一年</button>
               </form>
               <form class="sync-form" method="get" action="/sync-view">
+                <input type="hidden" name="months" value="24" />
+                <button type="submit">同步近两年</button>
+              </form>
+              <form class="sync-form" method="get" action="/sync-view">
                 <input type="hidden" name="year" value="{datetime.utcnow().year}" />
                 <button type="submit">同步本年</button>
               </form>
@@ -481,6 +485,6 @@ async def api_news(year: Optional[int] = Query(default=None)):
 def bootstrap():
     init_db()
     try:
-        fetch_and_save_news(months=1, max_pages=8, max_items=30)
+        fetch_and_save_news(months=3, max_items=120)
     except Exception as exc:
         logger.exception("Startup bootstrap failed: %s", exc)

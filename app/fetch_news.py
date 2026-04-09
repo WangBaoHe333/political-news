@@ -21,7 +21,7 @@ LIST_BASE_URL = os.getenv("LIST_BASE_URL", "https://www.gov.cn/yaowen/")
 LIST_JSON_URL = os.getenv("LIST_JSON_URL", "https://www.gov.cn/yaowen/liebiao/YAOWENLIEBIAO.json")
 HTTP_TIMEOUT = int(os.getenv("HTTP_TIMEOUT_SECONDS", "12"))
 DEFAULT_MAX_PAGES = int(os.getenv("SYNC_MAX_PAGES", "60"))
-DEFAULT_MAX_ITEMS = int(os.getenv("SYNC_MAX_ITEMS", "180"))
+DEFAULT_MAX_ITEMS = int(os.getenv("SYNC_MAX_ITEMS", "400"))
 
 
 def _normalize_text(value):
@@ -122,7 +122,13 @@ def _load_json_feed():
             continue
         title = _normalize_text(entry.get("TITLE") or entry.get("TITLE1") or entry.get("TI") or "")
         href = entry.get("URL") or entry.get("LINK") or ""
-        published_text = entry.get("PUBDATE") or entry.get("DATE") or entry.get("PT") or ""
+        published_text = (
+            entry.get("DOCRELPUBTIME")
+            or entry.get("PUBDATE")
+            or entry.get("DATE")
+            or entry.get("PT")
+            or ""
+        )
         published_at = _extract_date(str(published_text))
 
         if not title or not href:
