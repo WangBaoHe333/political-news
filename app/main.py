@@ -32,21 +32,14 @@ def _query_news(year=None):
     db = SessionLocal()
     try:
         query = db.query(News)
-        now = datetime.utcnow()
         if year:
             query = query.filter(News.year == year)
         else:
-            start_date = now - timedelta(days=365)
+            start_date = datetime.utcnow() - timedelta(days=365)
             query = query.filter(News.published_at >= start_date)
 
         news_items = query.order_by(News.published_at.desc()).all()
         years = [value[0] for value in db.query(News.year).distinct().order_by(News.year.desc()).all()]
-        current_year = now.year
-        previous_year = current_year - 1
-        for candidate in [current_year, previous_year]:
-            if candidate not in years:
-                years.insert(0, candidate)
-        years = sorted(set(years), reverse=True)
         return news_items, years
     finally:
         db.close()
@@ -108,14 +101,9 @@ def _latest_news_date(news_items):
 
 
 def _today_news(news_items):
-    today = datetime.utcnow().date()
-    today_items = [item for item in news_items if item.published_at.date() == today]
-    if today_items:
-        return today_items, "今日时政"
-
     latest_date = _latest_news_date(news_items)
     if not latest_date:
-        return [], "今日时政"
+        return [], "最新时政"
 
     latest_items = [item for item in news_items if item.published_at.date() == latest_date.date()]
     return latest_items[:8], f"最新时政（{latest_date.strftime('%Y-%m-%d')}）"
@@ -200,9 +188,10 @@ async def read_news(
     today_items, today_title = _today_news(news_items)
     last_sync_at = _get_app_state("last_sync_at", "尚未同步")
     last_sync_result = sync_status or _get_app_state("last_sync_result", "")
+    latest_published_at = _latest_news_date(news_items)
 
     selected_year = str(year) if year else "近一年"
-    range_label = "近一年（参照公务员时政常见考查周期）" if not year else f"{year}年全年"
+    range_label = "近一年（参照公务员时政常见考查周期）" if not year else f"{year}年"
     year_options = ['<option value="">近一年</option>']
     for value in years:
         selected = " selected" if year == value else ""
@@ -210,9 +199,13 @@ async def read_news(
 
     empty_state = ""
     if not news_items:
+        if year:
+            empty_message = f"当前数据源暂无 {year} 年时政内容，请切换到近一年或已有年份。"
+        else:
+            empty_message = "当前近一年范围内还没有可展示的时政数据，请先点击上方同步按钮。"
         empty_state = (
             '<div class="empty-state">'
-            "当前还没有可展示的时政数据。请先点击上方同步按钮拉取近一年或本年时政。"
+            f"{escape(empty_message)}"
             "</div>"
         )
 
@@ -410,7 +403,8 @@ async def read_news(
           <div class="facts">
             <div class="fact"><strong>当前视图：</strong>{selected_year}</div>
             <div class="fact"><strong>考公参考范围：</strong>{range_label}</div>
-            <div class="fact"><strong>时政更新时间：</strong>{escape(last_sync_at)}（服务器记录）</div>
+            <div class="fact"><strong>数据最新发布日期：</strong>{escape(latest_published_at.strftime("%Y-%m-%d") if latest_published_at else "暂无数据")}</div>
+            <div class="fact"><strong>最近同步时间：</strong>{escape(last_sync_at)}（服务器记录）</div>
           </div>
           {sync_notice}
         </section>
