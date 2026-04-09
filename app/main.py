@@ -121,23 +121,38 @@ def _run_background_sync(scope_label, year=None, months=12, max_pages=None, max_
 
 
 def _month_batches(total_months, batch_size=3):
-    now = datetime.utcnow().replace(day=1)
+    now = datetime.utcnow().replace(day=1, hour=0, minute=0, second=0, microsecond=0)
     batches = []
     remaining = total_months
-    offset = 0
-    while remaining > 0:
+    current_end = now
+
+    while remaining > 0 and current_end.year >= 2000:
         current_batch = min(batch_size, remaining)
-        batch_end_month = (now - timedelta(days=offset * 30)).replace(day=1)
-        batch_start_month = (batch_end_month - timedelta(days=(current_batch - 1) * 30)).replace(day=1)
-        if batch_end_month.month == 12:
-            next_month = batch_end_month.replace(year=batch_end_month.year + 1, month=1, day=1)
+
+        if current_end.month == 1:
+            batch_start_month = current_end.replace(year=current_end.year - (current_batch - 1), month=1, day=1)
         else:
-            next_month = batch_end_month.replace(month=batch_end_month.month + 1, day=1)
-        end = next_month - timedelta(seconds=1)
+            month_index = current_end.year * 12 + current_end.month - 1
+            start_index = month_index - (current_batch - 1)
+            start_year = start_index // 12
+            start_month = start_index % 12 + 1
+            batch_start_month = datetime(start_year, start_month, 1)
+
+        if current_end.month == 12:
+            next_month = current_end.replace(year=current_end.year + 1, month=1, day=1)
+        else:
+            next_month = current_end.replace(month=current_end.month + 1, day=1)
+
         start = batch_start_month
+        end = next_month - timedelta(seconds=1)
         batches.append((start, end, current_batch))
         remaining -= current_batch
-        offset += current_batch
+
+        if batch_start_month.month == 1:
+            current_end = batch_start_month.replace(year=batch_start_month.year - 1, month=12, day=1)
+        else:
+            current_end = batch_start_month.replace(month=batch_start_month.month - 1, day=1)
+
     return batches
 
 
