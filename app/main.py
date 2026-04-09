@@ -23,7 +23,7 @@ AUTO_SYNC_ON_STARTUP = os.getenv("AUTO_SYNC_ON_STARTUP", "0").lower() in {"1", "
 SYNC_LOCK = threading.Lock()
 
 
-def fetch_and_save_news(year=None, months=12, max_pages=None, max_items=None, start_date=None, end_date=None):
+def fetch_and_save_news(year=None, months=12, max_pages=None, max_items=None, start_date=None, end_date=None, progress_callback=None):
     news_items = fetch_news(
         year=year,
         months=months,
@@ -31,6 +31,7 @@ def fetch_and_save_news(year=None, months=12, max_pages=None, max_items=None, st
         max_items=max_items,
         start_date=start_date,
         end_date=end_date,
+        progress_callback=progress_callback,
     )
     saved_count = save_news_to_db(news_items)
     _set_app_state("last_sync_at", datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S"))
@@ -141,7 +142,29 @@ def _run_batched_backfill(scope_label, total_months, batch_size=3, max_items=150
             for start, end, months in _month_batches(total_months, batch_size=batch_size):
                 label = f"{start.strftime('%Y-%m')} 至 {end.strftime('%Y-%m')}"
                 _set_app_state("sync_message", f"{scope_label}后台回填进行中：正在处理 {label}。")
-                result = fetch_and_save_news(start_date=start, end_date=end, max_items=max_items)
+                def on_progress(info):
+                    if info.get("stage") == "archive_page":
+                        page = info.get("page")
+                        matched = info.get("matched")
+                        added_total = info.get("added_total")
+                        note = info.get("note", "")
+                        suffix = f"，备注：{note}" if note else ""
+                        _set_app_state(
+                            "sync_message",
+                            f"{scope_label}后台回填进行中：{label}，历史页 home_{page}.htm 命中 {matched} 条，当前累计待写入 {added_total} 条{suffix}。",
+                        )
+                    elif info.get("stage") == "json":
+                        _set_app_state(
+                            "sync_message",
+                            f"{scope_label}后台回填进行中：{label}，近期 JSON 命中 {info.get('collected', 0)} 条。",
+                        )
+
+                result = fetch_and_save_news(
+                    start_date=start,
+                    end_date=end,
+                    max_items=max_items,
+                    progress_callback=on_progress,
+                )
                 completed += months
                 total_fetched += result["fetched"]
                 total_saved += result["saved"]

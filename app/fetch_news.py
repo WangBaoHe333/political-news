@@ -212,7 +212,7 @@ def _target_range(year=None, months=12, start_date=None, end_date=None):
     return start, now
 
 
-def fetch_news(year=None, months=12, max_pages=None, max_items=None, start_date=None, end_date=None):
+def fetch_news(year=None, months=12, max_pages=None, max_items=None, start_date=None, end_date=None, progress_callback=None):
     max_pages = max_pages or DEFAULT_MAX_PAGES
     max_items = max_items or DEFAULT_MAX_ITEMS
     start_date, end_date = _target_range(year=year, months=months, start_date=start_date, end_date=end_date)
@@ -277,6 +277,15 @@ def fetch_news(year=None, months=12, max_pages=None, max_items=None, start_date=
         collected.append(item)
 
     append_items(collected)
+    if progress_callback:
+        progress_callback(
+            {
+                "stage": "json",
+                "collected": len(collected),
+                "total": len(news_items),
+                "oldest_seen": oldest_seen.strftime("%Y-%m-%d") if oldest_seen else "",
+            }
+        )
 
     if (oldest_seen is None or oldest_seen > start_date) and len(news_items) < max_items:
         for page_number in range(1, max_pages + 1):
@@ -289,6 +298,16 @@ def fetch_news(year=None, months=12, max_pages=None, max_items=None, start_date=
 
             archive_items = _parse_list_page(archive_html, archive_url)
             if not archive_items:
+                if progress_callback:
+                    progress_callback(
+                        {
+                            "stage": "archive_page",
+                            "page": page_number,
+                            "matched": 0,
+                            "added_total": len(news_items),
+                            "note": "empty_page",
+                        }
+                    )
                 continue
 
             page_collected = []
@@ -318,6 +337,17 @@ def fetch_news(year=None, months=12, max_pages=None, max_items=None, start_date=
                 item["summary"] = summary or item["title"]
                 item["content"] = content or summary or item["title"]
                 page_collected.append(item)
+
+            if progress_callback:
+                progress_callback(
+                    {
+                        "stage": "archive_page",
+                        "page": page_number,
+                        "matched": len(page_collected),
+                        "added_total": len(news_items) + len(page_collected),
+                        "oldest_seen": page_oldest.strftime("%Y-%m-%d") if page_oldest else "",
+                    }
+                )
 
             if append_items(page_collected):
                 break
