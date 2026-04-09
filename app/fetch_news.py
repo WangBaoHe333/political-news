@@ -16,7 +16,7 @@ logger = logging.getLogger(__name__)
 
 DEFAULT_SOURCE = "gov_cn"
 DEFAULT_CATEGORY = "时政"
-LIST_BASE_URL = os.getenv("LIST_BASE_URL", "https://www.gov.cn/yaowen/")
+LIST_BASE_URL = os.getenv("LIST_BASE_URL", "https://www.gov.cn/xinwen/yaowen/")
 HTTP_TIMEOUT = int(os.getenv("HTTP_TIMEOUT_SECONDS", "12"))
 DEFAULT_MAX_PAGES = int(os.getenv("SYNC_MAX_PAGES", "60"))
 DEFAULT_MAX_ITEMS = int(os.getenv("SYNC_MAX_ITEMS", "180"))
@@ -36,8 +36,8 @@ def _fetch_url(url):
 
 def _build_list_url(page_number):
     if page_number == 0:
-        return urljoin(LIST_BASE_URL, "index.htm")
-    return urljoin(LIST_BASE_URL, f"index_{page_number + 1}.htm")
+        return urljoin(LIST_BASE_URL, "home.htm")
+    return urljoin(LIST_BASE_URL, f"home_{page_number}.htm")
 
 
 def _extract_date(text):
@@ -64,7 +64,7 @@ def _parse_list_page(html_text, page_url):
         if "content_" not in href or not title or href in seen_links:
             continue
 
-        if "/yaowen/" not in href and "/zhuanti/" not in href:
+        if "/xinwen/yaowen/" not in href and "/yaowen/" not in href and "/zhuanti/" not in href:
             continue
 
         published_at = None
