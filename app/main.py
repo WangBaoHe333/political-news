@@ -32,14 +32,21 @@ def _query_news(year=None):
     db = SessionLocal()
     try:
         query = db.query(News)
+        now = datetime.utcnow()
         if year:
             query = query.filter(News.year == year)
         else:
-            start_date = datetime.utcnow() - timedelta(days=365)
+            start_date = now - timedelta(days=365)
             query = query.filter(News.published_at >= start_date)
 
         news_items = query.order_by(News.published_at.desc()).all()
         years = [value[0] for value in db.query(News.year).distinct().order_by(News.year.desc()).all()]
+        current_year = now.year
+        previous_year = current_year - 1
+        for candidate in [current_year, previous_year]:
+            if candidate not in years:
+                years.insert(0, candidate)
+        years = sorted(set(years), reverse=True)
         return news_items, years
     finally:
         db.close()
@@ -205,9 +212,7 @@ async def read_news(
     if not news_items:
         empty_state = (
             '<div class="empty-state">'
-            "当前还没有可展示的时政数据。你可以先访问 "
-            '<a href="/sync?months=12">/sync?months=12</a> '
-            "拉取近一年内容，再刷新首页。"
+            "当前还没有可展示的时政数据。请先点击上方同步按钮拉取近一年或本年时政。"
             "</div>"
         )
 
