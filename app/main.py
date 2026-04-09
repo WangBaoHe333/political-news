@@ -1,52 +1,350 @@
 import logging
+from collections import OrderedDict
+from datetime import datetime, timedelta
+from html import escape
 
-from fastapi import FastAPI
-from fastapi.responses import HTMLResponse
+from fastapi import FastAPI, Query
+from fastapi.responses import HTMLResponse, JSONResponse
+
+from app.ai_summary import generate_questions, generate_summary
+from app.database import SessionLocal, init_db
 from app.fetch_news import fetch_news, save_news_to_db
-from app.database import SessionLocal
 from app.models import News
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-app = FastAPI()
+app = FastAPI(title="Political News")
 
 
-def fetch_and_save_news():
-    news_items = fetch_news()
+def fetch_and_save_news(year=None, months=12, max_pages=None, max_items=None):
+    news_items = fetch_news(year=year, months=months, max_pages=max_pages, max_items=max_items)
     saved_count = save_news_to_db(news_items)
     logger.info("Fetched %s items, saved %s new records", len(news_items), saved_count)
     return {"fetched": len(news_items), "saved": saved_count}
 
 
-@app.get("/")
-async def read_news():
+def _query_news(year=None):
     db = SessionLocal()
-    news_items = db.query(News).order_by(News.published.desc()).limit(10).all()
-    db.close()
+    try:
+        query = db.query(News)
+        if year:
+            query = query.filter(News.year == year)
+        else:
+            start_date = datetime.utcnow() - timedelta(days=365)
+            query = query.filter(News.published_at >= start_date)
 
-    html_content = "<h1>Latest Political News</h1><ul>"
-    for news in news_items:
-        html_content += f"<li><a href='{news.link}'>{news.title}</a><br>{news.summary}</li>"
-    html_content += "</ul>"
+        news_items = query.order_by(News.published_at.desc()).all()
+        years = [value[0] for value in db.query(News.year).distinct().order_by(News.year.desc()).all()]
+        return news_items, years
+    finally:
+        db.close()
 
+
+def _as_dict(news_items):
+    return [
+        {
+            "id": item.id,
+            "source": item.source,
+            "category": item.category,
+            "title": item.title,
+            "link": item.link,
+            "summary": item.summary,
+            "content": item.content,
+            "published": item.published,
+            "published_at": item.published_at,
+            "year": item.year,
+            "month": item.month,
+        }
+        for item in news_items
+    ]
+
+
+def _group_by_month(news_items):
+    groups = OrderedDict()
+    for item in news_items:
+        key = item.published_at.strftime("%Y年%m月")
+        groups.setdefault(key, []).append(item)
+    return groups
+
+
+def _render_summary(items):
+    return "".join(f"<li>{escape(line)}</li>" for line in items)
+
+
+def _render_questions(questions):
+    cards = []
+    for index, question in enumerate(questions, start=1):
+        options_html = "".join(f"<li>{escape(option)}</li>" for option in question["options"])
+        cards.append(
+            f"""
+            <article class="question-card">
+              <div class="question-type">{escape(question['type'])} {index}</div>
+              <h4>{escape(question['stem'])}</h4>
+              <ul>{options_html}</ul>
+              <p><strong>参考答案：</strong>{escape(question['answer'])}</p>
+              <p><strong>解析：</strong>{escape(question['analysis'])}</p>
+            </article>
+            """
+        )
+    return "".join(cards)
+
+
+def _render_news(groups):
+    sections = []
+    for month_label, items in groups.items():
+        articles = []
+        for item in items:
+            content_excerpt = escape((item.summary or item.content or "")[:220])
+            articles.append(
+                f"""
+                <article class="news-card">
+                  <div class="news-meta">{escape(item.published)} · {escape(item.source)}</div>
+                  <h4><a href="{escape(item.link)}" target="_blank" rel="noreferrer">{escape(item.title)}</a></h4>
+                  <p>{content_excerpt}</p>
+                </article>
+                """
+            )
+        sections.append(
+            f"""
+            <section class="month-block">
+              <div class="month-title">{month_label}</div>
+              {''.join(articles)}
+            </section>
+            """
+        )
+    return "".join(sections)
+
+
+@app.get("/", response_class=HTMLResponse)
+async def read_news(year: int | None = Query(default=None)):
+    news_items, years = _query_news(year=year)
+    news_dicts = _as_dict(news_items)
+    grouped = _group_by_month(news_items)
+    summary_lines = generate_summary(news_dicts)
+    questions = generate_questions(news_dicts)
+
+    selected_year = str(year) if year else "近一年"
+    year_options = ['<option value="">近一年</option>']
+    for value in years:
+        selected = " selected" if year == value else ""
+        year_options.append(f'<option value="{value}"{selected}>{value}年</option>')
+
+    empty_state = ""
+    if not news_items:
+        empty_state = (
+            '<div class="empty-state">'
+            "当前还没有可展示的时政数据。你可以先访问 "
+            '<a href="/sync?months=12">/sync?months=12</a> '
+            "拉取近一年内容，再刷新首页。"
+            "</div>"
+        )
+
+    html_content = f"""
+    <!DOCTYPE html>
+    <html lang="zh-CN">
+    <head>
+      <meta charset="utf-8" />
+      <meta name="viewport" content="width=device-width, initial-scale=1" />
+      <title>时政资料库</title>
+      <style>
+        :root {{
+          --bg: #f4f1ea;
+          --panel: #fffdf8;
+          --ink: #1d2a33;
+          --accent: #9f2b25;
+          --accent-soft: #e7c8b7;
+          --line: #d9d1c7;
+        }}
+        * {{ box-sizing: border-box; }}
+        body {{
+          margin: 0;
+          font-family: "Noto Serif SC", "Songti SC", serif;
+          color: var(--ink);
+          background:
+            radial-gradient(circle at top left, rgba(159, 43, 37, 0.12), transparent 30%),
+            linear-gradient(180deg, #f7f2ea 0%, var(--bg) 100%);
+        }}
+        a {{ color: var(--accent); text-decoration: none; }}
+        .shell {{ max-width: 1180px; margin: 0 auto; padding: 32px 20px 64px; }}
+        .hero {{
+          padding: 28px;
+          border: 1px solid var(--line);
+          background: linear-gradient(135deg, rgba(255,255,255,0.92), rgba(247,239,229,0.95));
+          border-radius: 24px;
+          box-shadow: 0 18px 40px rgba(61, 44, 35, 0.08);
+        }}
+        .hero h1 {{ margin: 0 0 8px; font-size: 40px; }}
+        .hero p {{ margin: 0; line-height: 1.7; max-width: 720px; }}
+        .toolbar {{
+          margin-top: 20px;
+          display: flex;
+          flex-wrap: wrap;
+          gap: 12px;
+          align-items: center;
+        }}
+        .toolbar form,
+        .toolbar .actions {{
+          display: flex;
+          gap: 12px;
+          align-items: center;
+          flex-wrap: wrap;
+        }}
+        select, button, .action-link {{
+          border-radius: 999px;
+          border: 1px solid var(--line);
+          background: var(--panel);
+          padding: 10px 16px;
+          color: var(--ink);
+          font-size: 15px;
+        }}
+        button, .action-link {{
+          cursor: pointer;
+          background: var(--accent);
+          color: white;
+          border-color: transparent;
+        }}
+        .grid {{
+          margin-top: 24px;
+          display: grid;
+          grid-template-columns: 1.25fr 0.75fr;
+          gap: 20px;
+        }}
+        .panel {{
+          background: var(--panel);
+          border: 1px solid var(--line);
+          border-radius: 22px;
+          padding: 22px;
+          box-shadow: 0 12px 28px rgba(61, 44, 35, 0.05);
+        }}
+        .panel h2 {{ margin-top: 0; margin-bottom: 12px; }}
+        .month-block + .month-block {{
+          margin-top: 22px;
+          padding-top: 22px;
+          border-top: 1px dashed var(--line);
+        }}
+        .month-title {{
+          display: inline-block;
+          margin-bottom: 14px;
+          padding: 6px 12px;
+          border-radius: 999px;
+          background: var(--accent-soft);
+          color: #63211c;
+          font-weight: 700;
+        }}
+        .news-card + .news-card {{
+          margin-top: 14px;
+          padding-top: 14px;
+          border-top: 1px solid rgba(217, 209, 199, 0.65);
+        }}
+        .news-meta {{
+          font-size: 13px;
+          color: #6b6f73;
+          margin-bottom: 6px;
+        }}
+        .news-card h4 {{
+          margin: 0 0 8px;
+          font-size: 18px;
+          line-height: 1.5;
+        }}
+        .news-card p,
+        .question-card p,
+        .panel li {{
+          line-height: 1.75;
+        }}
+        .question-card + .question-card {{
+          margin-top: 18px;
+          padding-top: 18px;
+          border-top: 1px solid rgba(217, 209, 199, 0.65);
+        }}
+        .question-type {{
+          color: var(--accent);
+          font-size: 13px;
+          font-weight: 700;
+          letter-spacing: 0.06em;
+          text-transform: uppercase;
+        }}
+        .empty-state {{
+          margin-top: 18px;
+          padding: 18px;
+          border-radius: 16px;
+          background: #fff7f0;
+          border: 1px dashed #d2ad9c;
+        }}
+        @media (max-width: 960px) {{
+          .grid {{ grid-template-columns: 1fr; }}
+          .hero h1 {{ font-size: 32px; }}
+        }}
+      </style>
+    </head>
+    <body>
+      <main class="shell">
+        <section class="hero">
+          <h1>时政资料库</h1>
+          <p>默认展示近一年的时政材料，可切换到具体年份查看，并按月份自动归档。右侧会基于当前筛选范围，生成只依赖原始文本的总结与题目。</p>
+          <div class="toolbar">
+            <form method="get" action="/">
+              <label for="year">查看范围</label>
+              <select id="year" name="year">{''.join(year_options)}</select>
+              <button type="submit">切换</button>
+            </form>
+            <div class="actions">
+              <a class="action-link" href="/sync?months=12">同步近一年</a>
+              <a class="action-link" href="/sync?year={datetime.utcnow().year}">同步本年</a>
+            </div>
+          </div>
+          <p style="margin-top: 16px;"><strong>当前视图：</strong>{selected_year}</p>
+        </section>
+
+        {empty_state}
+
+        <section class="grid">
+          <div class="panel">
+            <h2>按月归档</h2>
+            {_render_news(grouped)}
+          </div>
+          <div style="display: grid; gap: 20px;">
+            <aside class="panel">
+              <h2>AI 总结</h2>
+              <ul>{_render_summary(summary_lines)}</ul>
+            </aside>
+            <aside class="panel">
+              <h2>公考风格练习题</h2>
+              {_render_questions(questions)}
+            </aside>
+          </div>
+        </section>
+      </main>
+    </body>
+    </html>
+    """
     return HTMLResponse(content=html_content, status_code=200)
 
 
-@app.get("/refresh")
-async def refresh_news():
-    return fetch_and_save_news()
+@app.get("/sync")
+async def sync_news(
+    year: int | None = Query(default=None),
+    months: int = Query(default=12, ge=1, le=36),
+    max_pages: int | None = Query(default=None, ge=1, le=500),
+    max_items: int | None = Query(default=None, ge=1, le=1000),
+):
+    result = fetch_and_save_news(year=year, months=months, max_pages=max_pages, max_items=max_items)
+    return JSONResponse(result)
+
+
+@app.get("/api/news")
+async def api_news(year: int | None = Query(default=None)):
+    news_items, years = _query_news(year=year)
+    data = _as_dict(news_items)
+    for item in data:
+        item["published_at"] = item["published_at"].isoformat()
+    return JSONResponse({"years": years, "items": data})
 
 
 @app.on_event("startup")
-def fetch_news_on_startup():
+def bootstrap():
+    init_db()
     try:
-        fetch_and_save_news()
+        fetch_and_save_news(months=1, max_pages=8, max_items=30)
     except Exception as exc:
-        logger.exception("Startup news fetch failed: %s", exc)
-
-
-@app.on_event("shutdown")
-def close_db():
-    db = SessionLocal()
-    db.close()
+        logger.exception("Startup bootstrap failed: %s", exc)

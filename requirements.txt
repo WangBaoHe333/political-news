@@ -4,3 +4,4 @@ openai
 apscheduler
 feedparser
 sqlalchemy
+beautifulsoup4
