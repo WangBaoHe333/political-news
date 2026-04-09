@@ -2,6 +2,7 @@ import logging
 import os
 import re
 import json
+import time
 from datetime import datetime, timedelta
 from html import unescape
 from urllib.error import HTTPError, URLError
@@ -19,7 +20,8 @@ DEFAULT_SOURCE = "gov_cn"
 DEFAULT_CATEGORY = "时政"
 LIST_BASE_URL = os.getenv("LIST_BASE_URL", "https://www.gov.cn/yaowen/")
 LIST_JSON_URL = os.getenv("LIST_JSON_URL", "https://www.gov.cn/yaowen/liebiao/YAOWENLIEBIAO.json")
-HTTP_TIMEOUT = int(os.getenv("HTTP_TIMEOUT_SECONDS", "12"))
+HTTP_TIMEOUT = int(os.getenv("HTTP_TIMEOUT_SECONDS", "30"))
+HTTP_RETRIES = int(os.getenv("HTTP_RETRIES", "2"))
 DEFAULT_MAX_PAGES = int(os.getenv("SYNC_MAX_PAGES", "60"))
 DEFAULT_MAX_ITEMS = int(os.getenv("SYNC_MAX_ITEMS", "400"))
 
@@ -31,9 +33,18 @@ def _normalize_text(value):
 
 
 def _fetch_url(url):
-    request = Request(url, headers={"User-Agent": "political-news/1.0"})
-    with urlopen(request, timeout=HTTP_TIMEOUT) as response:
-        return response.read().decode("utf-8", errors="ignore")
+    last_error = None
+    for attempt in range(HTTP_RETRIES + 1):
+        try:
+            request = Request(url, headers={"User-Agent": "political-news/1.0"})
+            with urlopen(request, timeout=HTTP_TIMEOUT) as response:
+                return response.read().decode("utf-8", errors="ignore")
+        except (HTTPError, URLError, TimeoutError, OSError) as exc:
+            last_error = exc
+            if attempt >= HTTP_RETRIES:
+                raise
+            time.sleep(1.5 * (attempt + 1))
+    raise last_error
 
 def _extract_date(text):
     normalized = text.replace("/", "-").replace(".", "-")

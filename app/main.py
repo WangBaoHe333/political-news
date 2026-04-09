@@ -1,4 +1,5 @@
 import logging
+import os
 from collections import OrderedDict
 from datetime import datetime, timedelta
 from html import escape
@@ -17,6 +18,7 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 app = FastAPI(title="Political News")
+AUTO_SYNC_ON_STARTUP = os.getenv("AUTO_SYNC_ON_STARTUP", "0").lower() in {"1", "true", "yes", "on"}
 
 
 def fetch_and_save_news(year=None, months=12, max_pages=None, max_items=None):
@@ -484,6 +486,10 @@ async def api_news(year: Optional[int] = Query(default=None)):
 @app.on_event("startup")
 def bootstrap():
     init_db()
+    if not AUTO_SYNC_ON_STARTUP:
+        logger.info("Startup auto sync is disabled; serving cached database content only.")
+        return
+
     try:
         fetch_and_save_news(months=3, max_items=120)
     except Exception as exc:
