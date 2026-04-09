@@ -2,6 +2,7 @@ import logging
 from collections import OrderedDict
 from datetime import datetime, timedelta
 from html import escape
+from typing import Optional
 
 from fastapi import FastAPI, Query
 from fastapi.responses import HTMLResponse, JSONResponse
@@ -117,7 +118,7 @@ def _render_news(groups):
 
 
 @app.get("/", response_class=HTMLResponse)
-async def read_news(year: int | None = Query(default=None)):
+async def read_news(year: Optional[int] = Query(default=None)):
     news_items, years = _query_news(year=year)
     news_dicts = _as_dict(news_items)
     grouped = _group_by_month(news_items)
@@ -323,17 +324,17 @@ async def read_news(year: int | None = Query(default=None)):
 
 @app.get("/sync")
 async def sync_news(
-    year: int | None = Query(default=None),
+    year: Optional[int] = Query(default=None),
     months: int = Query(default=12, ge=1, le=36),
-    max_pages: int | None = Query(default=None, ge=1, le=500),
-    max_items: int | None = Query(default=None, ge=1, le=1000),
+    max_pages: Optional[int] = Query(default=None, ge=1, le=500),
+    max_items: Optional[int] = Query(default=None, ge=1, le=1000),
 ):
     result = fetch_and_save_news(year=year, months=months, max_pages=max_pages, max_items=max_items)
     return JSONResponse(result)
 
 
 @app.get("/api/news")
-async def api_news(year: int | None = Query(default=None)):
+async def api_news(year: Optional[int] = Query(default=None)):
     news_items, years = _query_news(year=year)
     data = _as_dict(news_items)
     for item in data:
