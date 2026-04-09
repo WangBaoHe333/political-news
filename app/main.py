@@ -90,6 +90,18 @@ def _get_sync_status():
     }
 
 
+def _reset_stale_sync_state():
+    if _get_app_state("sync_in_progress", "0") != "1":
+        return
+
+    _set_app_state("sync_in_progress", "0")
+    _set_app_state("sync_finished_at", datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S"))
+
+    existing_message = _get_app_state("sync_message", "")
+    if existing_message:
+        _set_app_state("sync_message", f"检测到服务重启，已重置上一次未完成的后台任务。上次状态：{existing_message}")
+
+
 def _run_background_sync(scope_label, year=None, months=12, max_pages=None, max_items=None):
     with SYNC_LOCK:
         _set_app_state("sync_in_progress", "1")
@@ -677,6 +689,7 @@ async def api_news(year: Optional[int] = Query(default=None)):
 @app.on_event("startup")
 def bootstrap():
     init_db()
+    _reset_stale_sync_state()
     if not AUTO_SYNC_ON_STARTUP:
         logger.info("Startup auto sync is disabled; serving cached database content only.")
         return
