@@ -1,11 +1,22 @@
+import logging
+
 from fastapi import FastAPI
 from fastapi.responses import HTMLResponse
 from app.fetch_news import fetch_news, save_news_to_db
-from app.ai_summary import generate_summary
 from app.database import SessionLocal
 from app.models import News
 
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
 app = FastAPI()
+
+
+def fetch_and_save_news():
+    news_items = fetch_news()
+    saved_count = save_news_to_db(news_items)
+    logger.info("Fetched %s items, saved %s new records", len(news_items), saved_count)
+    return {"fetched": len(news_items), "saved": saved_count}
 
 
 @app.get("/")
@@ -22,10 +33,17 @@ async def read_news():
     return HTMLResponse(content=html_content, status_code=200)
 
 
+@app.get("/refresh")
+async def refresh_news():
+    return fetch_and_save_news()
+
+
 @app.on_event("startup")
-def fetch_and_save_news():
-    news_items = fetch_news()
-    save_news_to_db(news_items)
+def fetch_news_on_startup():
+    try:
+        fetch_and_save_news()
+    except Exception as exc:
+        logger.exception("Startup news fetch failed: %s", exc)
 
 
 @app.on_event("shutdown")
