@@ -1,3 +1,56 @@
+# Python
 *.pyc
 __pycache__
+*.pyo
+*.pyd
+.Python
+*.so
+
+# 环境
+.env
+.venv
+env/
+venv/
+ENV/
+env.bak/
+venv.bak/
+
+# 编辑器
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# 数据库
 *.db
+*.sqlite
+*.sqlite3
+
+# 日志
+*.log
+logs/
+
+# 测试
+.coverage
+htmlcov/
+.pytest_cache/
+.mypy_cache/
+*.cover
+.hypothesis/
+
+# 构建
+dist/
+build/
+*.egg-info/
+.eggs/
+
+# 操作系统
+.DS_Store
+Thumbs.db
+
+# 应用特定
+data/
+temp/
+tmp/
+uploads/

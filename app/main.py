@@ -2,7 +2,7 @@ import logging
 import os
 import threading
 from collections import OrderedDict
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from html import escape
 from typing import Optional
 from urllib.parse import quote
@@ -14,6 +14,7 @@ from app.ai_summary import generate_questions, generate_summary
 from app.database import SessionLocal, init_db
 from app.fetch_news import fetch_news, save_news_to_db
 from app.models import AppState, News
+from app.tasks import setup_scheduler
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -283,6 +284,19 @@ def _latest_news_date(news_items):
 
 
 def _today_news(news_items):
+    today = datetime.utcnow().date()
+    today_items = [item for item in news_items if item.published_at.date() == today]
+    return today_items[:8], f"今日时政（{today.strftime('%Y-%m-%d')}）"
+
+
+def _yesterday_news(news_items):
+    yesterday = datetime.utcnow().date() - timedelta(days=1)
+    yesterday_items = [item for item in news_items if item.published_at.date() == yesterday]
+    return yesterday_items[:8], f"昨日时政（{yesterday.strftime('%Y-%m-%d')}）"
+
+
+def _latest_news(news_items):
+    """保留原功能：返回最新日期的新闻"""
     latest_date = _latest_news_date(news_items)
     if not latest_date:
         return [], "最新时政"
@@ -363,11 +377,18 @@ async def read_news(
     sync_status: str = Query(default=""),
 ):
     news_items, years = _query_news(year=year)
+    # 检查AI功能状态
+    openai_key = os.getenv("OPENAI_API_KEY", "")
+    ai_enabled = bool(openai_key and openai_key.strip() and openai_key != "your_openai_api_key_here")
+    ai_status_notice = ""
+    if not ai_enabled:
+        ai_status_notice = '<div class="ai-notice"><strong>提示：</strong>未检测到有效的OpenAI API Key，AI总结和题目生成功能使用基础模式。请配置OPENAI_API_KEY环境变量以启用完整AI功能。</div>'
     news_dicts = _as_dict(news_items)
     grouped = _group_by_month(news_items)
     summary_lines = generate_summary(news_dicts)
     questions = generate_questions(news_dicts)
     today_items, today_title = _today_news(news_items)
+    yesterday_items, yesterday_title = _yesterday_news(news_items)
     last_sync_at = _get_app_state("last_sync_at", "尚未同步")
     last_sync_result = sync_status or _get_app_state("last_sync_result", "")
     latest_published_at = _latest_news_date(news_items)
@@ -486,7 +507,7 @@ async def read_news(
         .top-panels {{
           margin-top: 20px;
           display: grid;
-          grid-template-columns: 0.9fr 1.1fr;
+          grid-template-columns: 0.9fr 0.9fr 1.2fr;
           gap: 20px;
         }}
         .panel h2 {{ margin-top: 0; margin-bottom: 12px; }}
@@ -615,6 +636,9 @@ async def read_news(
           <div class="panel" id="today-news">
             {_render_today_news(today_items, today_title)}
           </div>
+          <div class="panel" id="yesterday-news">
+            {_render_today_news(yesterday_items, yesterday_title)}
+          </div>
           <div class="panel">
             <h2>AI 总结</h2>
             <ul>{_render_summary(summary_lines)}</ul>
@@ -701,10 +725,85 @@ async def api_news(year: Optional[int] = Query(default=None)):
     return JSONResponse({"years": years, "items": data})
 
 
+@app.get("/api/news/today")
+async def api_news_today():
+    news_items, _ = _query_news(year=None)
+    today_items, today_title = _today_news(news_items)
+    data = _as_dict(today_items)
+    for item in data:
+        item["published_at"] = item["published_at"].isoformat()
+    return JSONResponse({"title": today_title, "items": data})
+
+
+@app.get("/api/news/yesterday")
+async def api_news_yesterday():
+    news_items, _ = _query_news(year=None)
+    yesterday_items, yesterday_title = _yesterday_news(news_items)
+    data = _as_dict(yesterday_items)
+    for item in data:
+        item["published_at"] = item["published_at"].isoformat()
+    return JSONResponse({"title": yesterday_title, "items": data})
+
+
+@app.get("/api/news/grouped-by-month")
+async def api_news_grouped_by_month(year: Optional[int] = Query(default=None)):
+    news_items, years = _query_news(year=year)
+    grouped = _group_by_month(news_items)
+    result = {}
+    for month_label, items in grouped.items():
+        data = _as_dict(items)
+        for item in data:
+            item["published_at"] = item["published_at"].isoformat()
+        result[month_label] = data
+    return JSONResponse({"years": years, "grouped_by_month": result})
+
+
+@app.get("/api/news/past-two-years")
+async def api_news_past_two_years():
+    # 获取过去两年的数据（当前年和前一年）
+    current_year = datetime.utcnow().year
+    all_items = []
+    for year in [current_year, current_year - 1]:
+        news_items, _ = _query_news(year=year)
+        all_items.extend(news_items)
+
+    # 按时间倒序排序
+    all_items.sort(key=lambda x: x.published_at, reverse=True)
+
+    data = _as_dict(all_items)
+    for item in data:
+        item["published_at"] = item["published_at"].isoformat()
+
+    # 按月份分组
+    grouped = _group_by_month(all_items)
+    grouped_result = {}
+    for month_label, items in grouped.items():
+        month_data = _as_dict(items)
+        for item in month_data:
+            item["published_at"] = item["published_at"].isoformat()
+        grouped_result[month_label] = month_data
+
+    return JSONResponse({
+        "title": f"过去两年时政内容 ({current_year-1}-{current_year})",
+        "total_items": len(data),
+        "items": data,
+        "grouped_by_month": grouped_result
+    })
+
+
+@app.get("/health")
+async def health_check():
+    """健康检查端点"""
+    return {"status": "healthy", "timestamp": datetime.now(timezone.utc).isoformat()}
+
+
 @app.on_event("startup")
 def bootstrap():
     init_db()
     _reset_stale_sync_state()
+    scheduler = setup_scheduler()
+    scheduler.start()
+    logger.info("定时任务调度器已启动")
     if not AUTO_SYNC_ON_STARTUP:
         logger.info("Startup auto sync is disabled; serving cached database content only.")
         return

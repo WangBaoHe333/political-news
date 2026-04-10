@@ -3,7 +3,7 @@ import os
 import re
 import json
 import time
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from html import unescape
 from urllib.error import HTTPError, URLError
 from urllib.parse import urljoin
@@ -205,7 +205,7 @@ def _parse_article_detail(html_text):
 def _target_range(year=None, months=12, start_date=None, end_date=None):
     if start_date and end_date:
         return start_date, end_date
-    now = datetime.utcnow()
+    now = datetime.now(timezone.utc)
     if year:
         return datetime(year, 1, 1), datetime(year, 12, 31, 23, 59, 59)
     start = now - timedelta(days=max(months, 1) * 30)
