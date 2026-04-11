@@ -13,6 +13,7 @@ from zoneinfo import ZoneInfo
 from fastapi import APIRouter, Query
 from fastapi.responses import HTMLResponse
 
+from app.config import get_settings
 from app.news_data import (
     count_news_records,
     get_news_by_id,
@@ -240,6 +241,27 @@ def _render_sync_panel(task_status: Dict[str, object], last_sync_at: str, last_s
     finished_at = task_status["finished_at"] or "暂无记录"
     last_result = last_sync_result or "尚未有成功同步记录。"
     busy_class = "status-badge busy" if task_status["in_progress"] else "status-badge"
+    sync_admin_token = get_settings().sync_admin_token
+    action_html = (
+        """
+      <div class="actions compact-actions">
+        <form method="get" action="/sync-view">
+          <input type="hidden" name="months" value="24" />
+          <button type="submit">同步近两年到数据库</button>
+        </form>
+        <form method="get" action="/sync-view">
+          <input type="hidden" name="year" value="{current_year}" />
+          <button type="submit">同步本年</button>
+        </form>
+      </div>
+        """.format(current_year=datetime.now(LOCAL_TZ).year)
+        if not sync_admin_token
+        else """
+      <div class="notice compact">
+        <strong>管理员提示：</strong>当前已启用同步令牌保护，公开页面只展示状态。手动同步请在服务器侧携带令牌调用接口。
+      </div>
+        """
+    )
 
     return f"""
     <section class="panel" id="sync-panel">
@@ -258,16 +280,7 @@ def _render_sync_panel(task_status: Dict[str, object], last_sync_at: str, last_s
       </div>
       <div class="notice compact" id="sync-message"><strong>当前状态：</strong>{escape(str(message))}</div>
       <div class="notice compact" id="sync-last-result"><strong>最近结果：</strong>{escape(last_result)}</div>
-      <div class="actions compact-actions">
-        <form method="get" action="/sync-view">
-          <input type="hidden" name="months" value="24" />
-          <button type="submit">同步近两年到数据库</button>
-        </form>
-        <form method="get" action="/sync-view">
-          <input type="hidden" name="year" value="{datetime.now(LOCAL_TZ).year}" />
-          <button type="submit">同步本年</button>
-        </form>
-      </div>
+      {action_html}
     </section>
     """
 

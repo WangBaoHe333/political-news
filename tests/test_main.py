@@ -223,6 +223,13 @@ def test_sync_view_redirects_to_status(client, monkeypatch):
     assert response.headers["location"].startswith("/status?sync_status=")
 
 
+def test_sync_view_requires_token_when_configured(client, monkeypatch):
+    """测试生产环境可为同步入口启用令牌保护"""
+    monkeypatch.setenv("SYNC_ADMIN_TOKEN", "secret-token")
+    response = client.get("/sync-view?months=24", follow_redirects=False)
+    assert response.status_code == 403
+
+
 def test_api_docs_available(client):
     """测试API文档是否可用"""
     response = client.get("/docs")

@@ -5,8 +5,10 @@ from typing import Optional
 from urllib.parse import quote
 
 from fastapi import APIRouter, Query
+from fastapi import HTTPException
 from fastapi.responses import JSONResponse, RedirectResponse
 
+from app.config import get_settings
 from app.sync_service import (
     fetch_and_save_news,
     get_sync_status,
@@ -17,13 +19,23 @@ from app.sync_service import (
 router = APIRouter(tags=["同步"])
 
 
+def _ensure_sync_token(token: Optional[str]) -> None:
+    required_token = get_settings().sync_admin_token
+    if not required_token:
+        return
+    if token != required_token:
+        raise HTTPException(status_code=403, detail="同步接口需要管理员令牌。")
+
+
 @router.get("/sync")
 async def sync_news(
     year: Optional[int] = Query(default=None),
     months: int = Query(default=12, ge=1, le=36),
     max_pages: Optional[int] = Query(default=None, ge=1, le=500),
     max_items: Optional[int] = Query(default=None, ge=1, le=1000),
+    token: Optional[str] = Query(default=None),
 ):
+    _ensure_sync_token(token)
     result = fetch_and_save_news(
         year=year, months=months, max_pages=max_pages, max_items=max_items
     )
@@ -36,7 +48,9 @@ async def sync_view(
     months: int = Query(default=12, ge=1, le=36),
     max_pages: Optional[int] = Query(default=None, ge=1, le=500),
     max_items: Optional[int] = Query(default=None, ge=1, le=1000),
+    token: Optional[str] = Query(default=None),
 ):
+    _ensure_sync_token(token)
     scope = f"{year}年" if year else f"近{months}个月"
     started = start_background_sync(scope, year=year, months=months, max_pages=max_pages, max_items=max_items)
     if started:
@@ -57,7 +71,9 @@ async def backfill_view(
     months: int = Query(default=24, ge=1, le=36),
     batch_size: int = Query(default=3, ge=1, le=6),
     max_items: int = Query(default=150, ge=20, le=400),
+    token: Optional[str] = Query(default=None),
 ):
+    _ensure_sync_token(token)
     scope = f"近{months}个月分批回填"
     started = start_batched_backfill(scope, total_months=months, batch_size=batch_size, max_items=max_items)
     if started:
