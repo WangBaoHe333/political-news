@@ -38,11 +38,15 @@ async def lifespan(app: FastAPI):
 
 
 def create_app() -> FastAPI:
+    settings = get_settings()
     application = FastAPI(
         title="时政资料库 / Political News",
         description="中国政府网时政聚合、按月归档、年份筛选与关键词搜索。",
         version="1.0.0",
         lifespan=lifespan,
+        docs_url="/docs" if settings.expose_api_docs else None,
+        redoc_url="/redoc" if settings.expose_api_docs else None,
+        openapi_url="/openapi.json" if settings.expose_api_docs else None,
         openapi_tags=[
             {"name": "页面", "description": "HTML 阅读界面"},
             {"name": "新闻 API", "description": "JSON 接口（支持年份、关键词与时间维度）"},

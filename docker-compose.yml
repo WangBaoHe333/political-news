@@ -13,6 +13,7 @@ services:
       - BOOTSTRAP_RECENT_NEWS_ON_STARTUP=1
       - SCHEDULED_SYNC_INTERVAL_HOURS=1
       - SCHEDULED_SYNC_TIMEZONE=Asia/Shanghai
+      - EXPOSE_API_DOCS=1
       - TZ=Asia/Shanghai
       - LOG_LEVEL=INFO
     volumes:

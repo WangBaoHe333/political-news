@@ -15,6 +15,7 @@ class Settings:
     sync_admin_token: str
     scheduled_sync_interval_hours: int
     scheduled_sync_timezone: str
+    expose_api_docs: bool
 
 
 def get_settings() -> Settings:
@@ -25,4 +26,5 @@ def get_settings() -> Settings:
         scheduled_sync_interval_hours=max(1, int(os.getenv("SCHEDULED_SYNC_INTERVAL_HOURS", "1"))),
         scheduled_sync_timezone=os.getenv("SCHEDULED_SYNC_TIMEZONE", "Asia/Shanghai").strip()
         or "Asia/Shanghai",
+        expose_api_docs=_truthy_env("EXPOSE_API_DOCS", "1"),
     )

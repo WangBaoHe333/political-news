@@ -336,6 +336,64 @@ def _render_quality_panel() -> str:
     )
 
 
+def _source_health_rows(items: Sequence) -> List[Dict[str, str]]:
+    now = datetime.now(LOCAL_TZ)
+    rows: List[Dict[str, str]] = []
+
+    for source in TRUSTED_SOURCE_ORDER:
+        source_items = [item for item in items if item.source == source]
+        latest = max((item.published_at for item in source_items), default=None)
+        count = len(source_items)
+
+        if latest is None:
+            freshness = "缺失"
+            freshness_class = "stale"
+            latest_text = "暂无数据"
+        else:
+            age_days = (now.date() - latest.date()).days
+            if age_days <= 2:
+                freshness = "正常"
+                freshness_class = "healthy"
+            elif age_days <= 7:
+                freshness = "轻微延迟"
+                freshness_class = "warm"
+            else:
+                freshness = "偏旧"
+                freshness_class = "stale"
+            latest_text = latest.strftime("%Y-%m-%d")
+
+        rows.append(
+            {
+                "source": source_label(source),
+                "trust": source_trust_label(source),
+                "latest": latest_text,
+                "count": str(count),
+                "freshness": freshness,
+                "freshness_class": freshness_class,
+            }
+        )
+    return rows
+
+
+def _render_source_health_panel(items: Sequence) -> str:
+    rows = _source_health_rows(items)
+    cards = []
+    for row in rows:
+        cards.append(
+            "<article class='health-card'>"
+            f"<div class='health-head'><strong>{escape(row['source'])}</strong><span class='health-badge {escape(row['freshness_class'])}'>{escape(row['freshness'])}</span></div>"
+            f"<div class='health-meta'>{escape(row['trust'])}</div>"
+            f"<div class='health-grid'><span>最近日期：{escape(row['latest'])}</span><span>近两年条数：{escape(row['count'])}</span></div>"
+            "</article>"
+        )
+    return (
+        "<section class='panel'>"
+        "<div class='panel-head'><div><h2>来源覆盖</h2><div class='panel-subtitle'>这里帮助你快速判断哪一路数据断流了、哪一路还是新鲜的。</div></div></div>"
+        + "".join(cards)
+        + "</section>"
+    )
+
+
 def _render_nav(active_tab: str) -> str:
     tabs = [
         ("latest", "/", "最新时政"),
@@ -727,6 +785,50 @@ def _render_layout(
         .sync-item span {{
           font-size: 14px;
           line-height: 1.5;
+        }}
+        .health-card {{
+          padding: 14px 0;
+        }}
+        .health-card + .health-card {{
+          border-top: 1px solid rgba(35,43,51,0.08);
+        }}
+        .health-head {{
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          gap: 12px;
+          margin-bottom: 6px;
+        }}
+        .health-meta {{
+          color: var(--muted);
+          font-size: 13px;
+          margin-bottom: 8px;
+        }}
+        .health-grid {{
+          display: grid;
+          gap: 6px;
+          color: #2d3740;
+          font-size: 14px;
+        }}
+        .health-badge {{
+          display: inline-flex;
+          align-items: center;
+          padding: 6px 10px;
+          border-radius: 999px;
+          font-size: 12px;
+          font-weight: 700;
+        }}
+        .health-badge.healthy {{
+          background: rgba(41, 122, 76, 0.12);
+          color: #297a4c;
+        }}
+        .health-badge.warm {{
+          background: rgba(184, 118, 21, 0.14);
+          color: #9a5d04;
+        }}
+        .health-badge.stale {{
+          background: rgba(160, 50, 45, 0.12);
+          color: var(--accent);
         }}
         .status-badge {{
           display: inline-flex;
@@ -1408,7 +1510,7 @@ async def status_page(sync_status: str = Query(default="")):
     last_sync_at = get_app_state("last_sync_at", "尚未同步")
     last_sync_result = sync_status or get_app_state("last_sync_result", "")
 
-    main_html = _render_sync_panel(task_status, last_sync_at, last_sync_result)
+    main_html = _render_sync_panel(task_status, last_sync_at, last_sync_result) + _render_source_health_panel(recent_items)
     side_html = _shared_sidebar(
         year_counts,
         current_year,

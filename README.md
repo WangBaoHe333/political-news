@@ -81,6 +81,7 @@ BOOTSTRAP_RECENT_NEWS_ON_STARTUP=1    # 数据库不足两年时自动补齐
 SYNC_ADMIN_TOKEN=change_this_token    # 正式环境建议配置，保护手动同步接口
 SCHEDULED_SYNC_INTERVAL_HOURS=1       # 每隔 1 小时自动同步一次
 SCHEDULED_SYNC_TIMEZONE=Asia/Shanghai # 按北京时间执行定时同步
+EXPOSE_API_DOCS=1                     # 开发环境显示文档，生产建议关闭
 CORS_ORIGINS=http://localhost:8000
 ```
 
@@ -105,6 +106,7 @@ CORS_ORIGINS=http://localhost:8000
 - 使用独立的 `/status` 页面查看同步状态和同步按钮
 - 访问 `/sync-status` 查看详细同步状态
 - 生产环境建议配置 `SYNC_ADMIN_TOKEN`，避免访客直接触发同步和回填
+- 生产环境建议设置 `EXPOSE_API_DOCS=0`，避免直接暴露 Swagger / ReDoc
 
 ## 🔌 API接口
 

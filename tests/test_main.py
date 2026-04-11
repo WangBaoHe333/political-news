@@ -3,6 +3,8 @@
 from datetime import datetime, timezone
 from types import SimpleNamespace
 
+from fastapi.testclient import TestClient
+
 
 def test_home_page(client):
     """测试首页访问"""
@@ -68,6 +70,7 @@ def test_status_page(client):
     assert response.status_code == 200
     assert "同步状态" in response.text
     assert "同步近两年到数据库" in response.text
+    assert "来源覆盖" in response.text
 
 
 def test_news_detail_page(client, monkeypatch):
@@ -242,3 +245,16 @@ def test_redoc_available(client):
     """测试ReDoc文档是否可用"""
     response = client.get("/redoc")
     assert response.status_code == 200
+
+
+def test_api_docs_can_be_hidden_in_production(monkeypatch):
+    """生产环境可关闭文档入口"""
+    from app.main import create_app
+
+    monkeypatch.setenv("EXPOSE_API_DOCS", "0")
+    hidden_docs_app = create_app()
+
+    with TestClient(hidden_docs_app) as hidden_client:
+        assert hidden_client.get("/docs").status_code == 404
+        assert hidden_client.get("/redoc").status_code == 404
+        assert hidden_client.get("/openapi.json").status_code == 404
