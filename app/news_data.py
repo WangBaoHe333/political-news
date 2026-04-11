@@ -5,7 +5,7 @@ from datetime import datetime, timedelta
 from typing import Any, Dict, List, Optional, Tuple
 from zoneinfo import ZoneInfo
 
-from sqlalchemy import or_
+from sqlalchemy import func, or_
 
 from app.database import SessionLocal
 from app.models import News
@@ -31,7 +31,7 @@ def _build_search_filter(query_text: str):
 def query_news(
     year: Optional[int] = None,
     search: Optional[str] = None,
-    months: int = 24,
+    months: Optional[int] = 24,
 ) -> Tuple[List[News], List[int]]:
     db = SessionLocal()
     try:
@@ -39,7 +39,7 @@ def query_news(
 
         if year:
             query = query.filter(News.year == year)
-        else:
+        elif months is not None:
             start_date = datetime.utcnow() - timedelta(days=max(months, 1) * 30)
             query = query.filter(News.published_at >= start_date)
 
@@ -50,6 +50,25 @@ def query_news(
         news_items = query.order_by(News.published_at.desc()).all()
         years = [value[0] for value in db.query(News.year).distinct().order_by(News.year.desc()).all()]
         return news_items, years
+    finally:
+        db.close()
+
+
+def get_year_counts(min_year: Optional[int] = None) -> Dict[int, int]:
+    db = SessionLocal()
+    try:
+        query = db.query(News.year, func.count(News.id)).group_by(News.year).order_by(News.year.desc())
+        if min_year is not None:
+            query = query.filter(News.year >= min_year)
+        return {year: count for year, count in query.all()}
+    finally:
+        db.close()
+
+
+def count_news_records() -> int:
+    db = SessionLocal()
+    try:
+        return db.query(func.count(News.id)).scalar() or 0
     finally:
         db.close()
 
@@ -87,16 +106,20 @@ def latest_news_date(news_items: List[News]) -> Optional[datetime]:
     return max(item.published_at for item in news_items)
 
 
-def today_news(news_items: List[News]) -> Tuple[List[News], str]:
+def today_news(news_items: List[News], limit: Optional[int] = 8) -> Tuple[List[News], str]:
     today = datetime.now(LOCAL_TZ).date()
     today_items = [item for item in news_items if item.published_at.date() == today]
-    return today_items[:8], f"今日时政（{today.strftime('%Y-%m-%d')}）"
+    if limit is not None:
+        today_items = today_items[:limit]
+    return today_items, f"今日时政（{today.strftime('%Y-%m-%d')}）"
 
 
-def yesterday_news(news_items: List[News]) -> Tuple[List[News], str]:
+def yesterday_news(news_items: List[News], limit: Optional[int] = 8) -> Tuple[List[News], str]:
     yesterday = datetime.now(LOCAL_TZ).date() - timedelta(days=1)
     yesterday_items = [item for item in news_items if item.published_at.date() == yesterday]
-    return yesterday_items[:8], f"昨日时政（{yesterday.strftime('%Y-%m-%d')}）"
+    if limit is not None:
+        yesterday_items = yesterday_items[:limit]
+    return yesterday_items, f"昨日时政（{yesterday.strftime('%Y-%m-%d')}）"
 
 
 def attach_isoformat_published_at(items: List[Dict[str, Any]]) -> List[Dict[str, Any]]:

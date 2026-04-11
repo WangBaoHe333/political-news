@@ -1,4 +1,4 @@
-"""时政资料库 Web 首页。"""
+"""时政资料库 Web 页面。"""
 
 from collections import OrderedDict
 from datetime import datetime
@@ -6,20 +6,30 @@ from html import escape
 import json
 import math
 import re
-from typing import Optional
+from typing import Dict, Iterable, List, Optional, Sequence, Tuple
 from urllib.parse import urlencode
 from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, Query
 from fastapi.responses import HTMLResponse
 
-from app.news_data import group_by_month, latest_news_date, query_news, today_news, yesterday_news
+from app.news_data import (
+    count_news_records,
+    get_year_counts,
+    group_by_month,
+    latest_news_date,
+    query_news,
+    today_news,
+    yesterday_news,
+)
 from app.sync_service import get_app_state, get_sync_status
 
 router = APIRouter(tags=["页面"])
+
 LOCAL_TZ = ZoneInfo("Asia/Shanghai")
 MIN_FILTER_YEAR = 2025
-MONTHS_PER_PAGE = 6
+ITEMS_PER_PAGE = 12
+MONTHS_PER_PAGE = 4
 
 
 def _highlight_text(text: str, keyword: Optional[str]) -> str:
@@ -31,6 +41,49 @@ def _highlight_text(text: str, keyword: Optional[str]) -> str:
     escaped_needle = escape(needle)
     pattern = re.compile(re.escape(escaped_needle), re.IGNORECASE)
     return pattern.sub(lambda match: f"<mark>{match.group(0)}</mark>", safe_text)
+
+
+def _paginate_sequence(items: Sequence, page: int, page_size: int) -> Tuple[Sequence, int, int]:
+    if not items:
+        return items, 1, 1
+
+    total_pages = max(1, math.ceil(len(items) / page_size))
+    current_page = min(max(page, 1), total_pages)
+    start = (current_page - 1) * page_size
+    end = start + page_size
+    return items[start:end], current_page, total_pages
+
+
+def _build_href(path: str, **params: Optional[object]) -> str:
+    clean = {key: value for key, value in params.items() if value not in (None, "", False)}
+    if not clean:
+        return path
+    return f"{path}?{urlencode(clean)}"
+
+
+def _render_pager(path: str, current_page: int, total_pages: int, **params: Optional[object]) -> str:
+    if total_pages <= 1:
+        return ""
+
+    links = []
+    if current_page > 1:
+        links.append(
+            f"<a class='pager-link' href='{_build_href(path, page=current_page - 1, **params)}'>上一页</a>"
+        )
+
+    start = max(1, current_page - 2)
+    end = min(total_pages, current_page + 2)
+    for page in range(start, end + 1):
+        class_name = "pager-link current" if page == current_page else "pager-link"
+        links.append(
+            f"<a class='{class_name}' href='{_build_href(path, page=page, **params)}'>{page}</a>"
+        )
+
+    if current_page < total_pages:
+        links.append(
+            f"<a class='pager-link' href='{_build_href(path, page=current_page + 1, **params)}'>下一页</a>"
+        )
+    return "<nav class='pager'>" + "".join(links) + "</nav>"
 
 
 def _render_news_card(item, keyword: Optional[str] = None) -> str:
@@ -48,235 +101,191 @@ def _render_news_card(item, keyword: Optional[str] = None) -> str:
     )
 
 
-def _render_news_list(items, empty_text: str, limit: int = 6, keyword: Optional[str] = None) -> str:
+def _render_news_stream(items, empty_text: str, keyword: Optional[str] = None) -> str:
     if not items:
         return f"<div class='empty-state'>{escape(empty_text)}</div>"
-    return "".join(_render_news_card(item, keyword=keyword) for item in items[:limit])
+    return "".join(_render_news_card(item, keyword=keyword) for item in items)
 
 
-def _render_recent_updates(items, keyword: Optional[str] = None, limit: int = 6) -> str:
+def _render_recent_updates(items, empty_text: str) -> str:
     if not items:
-        return "<div class='empty-state'>当前还没有可展示的最近更新。</div>"
+        return f"<div class='empty-state'>{escape(empty_text)}</div>"
 
     blocks = []
-    for item in items[:limit]:
-        title = _highlight_text(item.title, keyword)
-        excerpt = _highlight_text((item.summary or item.content or item.title or "")[:110], keyword)
+    for item in items[:6]:
         published = escape(item.published or item.published_at.strftime("%Y-%m-%d"))
         source = escape(item.source or "unknown")
         blocks.append(
             "<article class='mini-card'>"
             f"<div class='mini-date'>{published} · {source}</div>"
-            f"<h4><a href='{escape(item.link)}' target='_blank' rel='noreferrer'>{title}</a></h4>"
-            f"<p>{excerpt}</p>"
+            f"<h4><a href='{escape(item.link)}' target='_blank' rel='noreferrer'>{escape(item.title)}</a></h4>"
+            f"<p>{escape((item.summary or item.content or item.title or '')[:110])}</p>"
             "</article>"
         )
     return "".join(blocks)
 
 
-def _paginate_month_groups(groups, page: int, per_page: int = MONTHS_PER_PAGE):
-    entries = list(groups.items())
-    if not entries:
-        return OrderedDict(), 1, 1
-
-    total_pages = max(1, math.ceil(len(entries) / per_page))
-    current_page = min(max(page, 1), total_pages)
-    start = (current_page - 1) * per_page
-    end = start + per_page
-    return OrderedDict(entries[start:end]), current_page, total_pages
-
-
-def _render_month_groups(groups, keyword: Optional[str] = None) -> str:
+def _render_month_groups(groups: "OrderedDict[str, List]", keyword: Optional[str] = None) -> str:
     if not groups:
-        return "<div class='empty-state'>当前筛选范围内没有可展示的时政内容。</div>"
+        return "<div class='empty-state'>当前时间范围内没有可展示的按月归档内容。</div>"
 
     sections = []
     for month_label, items in groups.items():
-        cards = "".join(_render_news_card(item, keyword=keyword) for item in items)
         sections.append(
             "<details class='month-block'>"
             f"<summary class='month-title'><span>{escape(month_label)}</span><strong>{len(items)} 条</strong></summary>"
-            f"<div class='month-body'>{cards}</div>"
+            f"<div class='month-body'>{''.join(_render_news_card(item, keyword=keyword) for item in items)}</div>"
             "</details>"
         )
     return "".join(sections)
 
 
-def _build_year_options(current_year: int, years, selected_year: Optional[int]) -> str:
-    visible_years = set(range(current_year, MIN_FILTER_YEAR - 1, -1))
-    visible_years.update(year for year in years if year >= MIN_FILTER_YEAR)
+def _visible_years(year_counts: Dict[int, int], current_year: int, selected_year: Optional[int] = None) -> List[int]:
+    years = set(range(current_year, MIN_FILTER_YEAR - 1, -1))
+    years.update(year for year in year_counts if year >= MIN_FILTER_YEAR)
     if selected_year:
-        visible_years.add(selected_year)
+        years.add(selected_year)
+    return sorted((year for year in years if year >= MIN_FILTER_YEAR), reverse=True)
 
-    ordered = sorted((year for year in visible_years if year >= MIN_FILTER_YEAR), reverse=True)
-    options = ['<option value="">近两年</option>']
-    for value in ordered:
-        selected = " selected" if selected_year == value else ""
-        options.append(f'<option value="{value}"{selected}>{value}年</option>')
+
+def _render_year_select(year_counts: Dict[int, int], current_year: int, selected_year: Optional[int]) -> str:
+    options = ['<option value="">全部年份</option>']
+    for year in _visible_years(year_counts, current_year, selected_year):
+        selected = " selected" if year == selected_year else ""
+        count_text = f" ({year_counts.get(year, 0)})" if year_counts.get(year, 0) else ""
+        options.append(f"<option value='{year}'{selected}>{year}年{count_text}</option>")
     return "".join(options)
 
 
-def _build_page_url(page: int, year: Optional[int], keyword: Optional[str]) -> str:
-    params = {"page": page}
-    if year:
-        params["year"] = year
-    if keyword:
-        params["q"] = keyword
-    return f"/?{urlencode(params)}#archive"
+def _render_year_grid(year_counts: Dict[int, int], current_year: int) -> str:
+    years = _visible_years(year_counts, current_year)
+    if not years:
+        return "<div class='empty-state'>当前还没有可展示的年份数据。</div>"
+
+    cards = []
+    for year in years:
+        count = year_counts.get(year, 0)
+        cards.append(
+            "<a class='year-card' href='{}'>"
+            "<strong>{}</strong>"
+            "<span>{} 条时政</span>"
+            "</a>".format(_build_href(f"/year/{year}"), year, count)
+        )
+    return "<div class='year-grid'>" + "".join(cards) + "</div>"
 
 
-def _render_pagination(current_page: int, total_pages: int, year: Optional[int], keyword: Optional[str]) -> str:
-    if total_pages <= 1:
-        return ""
-
-    links = []
-    if current_page > 1:
-        links.append(f"<a class='pager-link' href='{_build_page_url(current_page - 1, year, keyword)}'>上一页</a>")
-
-    start = max(1, current_page - 2)
-    end = min(total_pages, current_page + 2)
-    for page in range(start, end + 1):
-        class_name = "pager-link current" if page == current_page else "pager-link"
-        links.append(f"<a class='{class_name}' href='{_build_page_url(page, year, keyword)}'>{page}</a>")
-
-    if current_page < total_pages:
-        links.append(f"<a class='pager-link' href='{_build_page_url(current_page + 1, year, keyword)}'>下一页</a>")
-
-    return "<nav class='pager'>" + "".join(links) + "</nav>"
-
-
-def _render_sync_panel(task_status, last_sync_at: str, last_sync_result: str) -> str:
+def _render_sync_panel(task_status: Dict[str, object], last_sync_at: str, last_sync_result: str) -> str:
     status_label = "进行中" if task_status["in_progress"] else "空闲"
-    message = task_status["message"] or "当前没有运行中的同步任务。"
     scope = task_status["scope"] or "最近一次任务"
+    message = task_status["message"] or "当前没有运行中的同步任务。"
     started_at = task_status["started_at"] or "暂无记录"
     finished_at = task_status["finished_at"] or "暂无记录"
-    latest = last_sync_result or "尚未有成功同步记录。"
+    last_result = last_sync_result or "尚未有成功同步记录。"
+    busy_class = "status-badge busy" if task_status["in_progress"] else "status-badge"
 
     return f"""
-    <section class="panel sync-panel" id="sync-panel">
+    <section class="panel" id="sync-panel">
       <div class="panel-head">
         <div>
           <h2>同步状态</h2>
-          <div class="panel-subtitle">页面内实时可见，每 10 秒自动刷新一次。</div>
+          <div class="panel-subtitle">页面会自动刷新这里的状态，不需要再跳去纯 JSON 接口。</div>
         </div>
-        <span class="status-badge" id="sync-badge">{escape(status_label)}</span>
+        <span class="{busy_class}" id="sync-badge">{escape(status_label)}</span>
       </div>
       <div class="sync-grid">
-        <div class="sync-item">
-          <strong>任务范围</strong>
-          <span id="sync-scope">{escape(scope)}</span>
-        </div>
-        <div class="sync-item">
-          <strong>最近同步时间</strong>
-          <span id="sync-last-at">{escape(last_sync_at)}</span>
-        </div>
-        <div class="sync-item">
-          <strong>开始时间</strong>
-          <span id="sync-started-at">{escape(started_at)}</span>
-        </div>
-        <div class="sync-item">
-          <strong>结束时间</strong>
-          <span id="sync-finished-at">{escape(finished_at)}</span>
-        </div>
+        <div class="sync-item"><strong>任务范围</strong><span id="sync-scope">{escape(str(scope))}</span></div>
+        <div class="sync-item"><strong>最近同步</strong><span id="sync-last-at">{escape(last_sync_at)}</span></div>
+        <div class="sync-item"><strong>开始时间</strong><span id="sync-started-at">{escape(str(started_at))}</span></div>
+        <div class="sync-item"><strong>结束时间</strong><span id="sync-finished-at">{escape(str(finished_at))}</span></div>
       </div>
-      <div class="notice compact" id="sync-message"><strong>当前状态：</strong>{escape(message)}</div>
-      <div class="notice compact" id="sync-last-result"><strong>最近结果：</strong>{escape(latest)}</div>
+      <div class="notice compact" id="sync-message"><strong>当前状态：</strong>{escape(str(message))}</div>
+      <div class="notice compact" id="sync-last-result"><strong>最近结果：</strong>{escape(last_result)}</div>
       <div class="actions compact-actions">
         <form method="get" action="/sync-view">
-          <input type="hidden" name="months" value="1" />
-          <button type="submit">刷新最新内容</button>
+          <input type="hidden" name="months" value="24" />
+          <button type="submit">同步近两年到数据库</button>
         </form>
         <form method="get" action="/sync-view">
-          <input type="hidden" name="months" value="24" />
-          <button type="submit">同步近两年</button>
+          <input type="hidden" name="year" value="{datetime.now(LOCAL_TZ).year}" />
+          <button type="submit">同步本年</button>
         </form>
       </div>
     </section>
     """
 
 
-@router.get("/", response_class=HTMLResponse)
-async def read_news(
-    year: Optional[int] = Query(default=None),
-    q: Optional[str] = Query(default=None),
-    page: int = Query(default=1, ge=1),
-    sync_status: str = Query(default=""),
-):
-    current_year = datetime.now(LOCAL_TZ).year
-    archive_items, years = query_news(year=year, search=q, months=24)
-    all_groups = group_by_month(archive_items)
-    visible_groups, current_page, total_pages = _paginate_month_groups(all_groups, page)
+def _render_nav(active_tab: str) -> str:
+    tabs = [
+        ("latest", "/", "最新时政"),
+        ("today", "/today", "今日时政"),
+        ("yesterday", "/yesterday", "昨日时政"),
+        ("archive", "/archive", "按月归档"),
+        ("years", "/years", "年份切换"),
+        ("search", "/search", "搜索"),
+        ("status", "/status", "同步状态"),
+    ]
 
-    recent_items, _ = query_news(year=None, search=None, months=24)
-    context_items = archive_items if (year or q) else recent_items
-    today_items, today_title = today_news(context_items)
-    yesterday_items, yesterday_title = yesterday_news(context_items)
+    links = []
+    for key, href, label in tabs:
+        class_name = "nav-link active" if key == active_tab else "nav-link"
+        links.append(f"<a class='{class_name}' href='{href}'>{label}</a>")
+    return "".join(links)
 
-    last_sync_at = get_app_state("last_sync_at", "尚未同步")
-    last_sync_result = sync_status or get_app_state("last_sync_result", "")
-    latest_published_at = latest_news_date(recent_items)
-    task_status = get_sync_status()
 
-    selected_year = str(year) if year else "近两年"
-    latest_value = latest_published_at.strftime("%Y-%m-%d") if latest_published_at else "暂无数据"
-    result_label = f"共命中 {len(archive_items)} 条"
-    if q:
-        result_label = f"关键词「{q}」命中 {len(archive_items)} 条"
+def _render_layout(
+    *,
+    active_tab: str,
+    hero_title: str,
+    hero_text: str,
+    stats: Iterable[Tuple[str, str]],
+    main_html: str,
+    side_html: str,
+    year_counts: Dict[int, int],
+    current_year: int,
+    selected_year: Optional[int] = None,
+    search_query: str = "",
+    page_title: Optional[str] = None,
+) -> HTMLResponse:
+    stats_html = "".join(
+        f"<div class='stat'><strong>{escape(label)}</strong><span>{escape(value)}</span></div>"
+        for label, value in stats
+    )
 
-    if year:
-        range_label = f"当前查看 {year} 年内容，默认按月份归档，展开即可阅读。"
-    else:
-        range_label = "默认展示最近两年的时政内容，按月份归档并支持分页查看。"
-
-    empty_state = ""
-    if not archive_items:
-        if year and q:
-            empty_message = f"没有找到 {year} 年、关键词「{q}」匹配的时政内容。"
-        elif year:
-            empty_message = f"当前暂无 {year} 年时政内容，请先同步或切换年份。"
-        elif q:
-            empty_message = f"没有找到关键词「{q}」匹配的时政内容。"
-        else:
-            empty_message = "当前近两年的时政内容为空，请先同步数据。"
-        empty_state = f"<div class='empty-state empty-wide'>{escape(empty_message)}</div>"
-
-    html_content = f"""
+    html = f"""
     <!DOCTYPE html>
     <html lang="zh-CN">
     <head>
       <meta charset="utf-8" />
       <meta name="viewport" content="width=device-width, initial-scale=1" />
       <meta http-equiv="refresh" content="3600" />
-      <title>时政资料库</title>
+      <title>{escape(page_title or hero_title)}</title>
       <style>
         :root {{
-          --bg: #f6f1e8;
-          --panel: rgba(255, 255, 255, 0.84);
+          --bg: #f5f0e7;
+          --panel: rgba(255,255,255,0.86);
           --ink: #16202a;
-          --muted: #617180;
-          --accent: #a0302d;
+          --muted: #61707d;
+          --accent: #a0322d;
           --accent-2: #235c79;
-          --line: rgba(35, 43, 51, 0.12);
-          --shadow: 0 18px 42px rgba(37, 31, 24, 0.08);
+          --line: rgba(35,43,51,0.12);
+          --shadow: 0 18px 40px rgba(37,31,24,0.08);
         }}
         * {{ box-sizing: border-box; }}
-        html {{ scroll-behavior: smooth; }}
         body {{
           margin: 0;
           color: var(--ink);
           font-family: "Noto Serif SC", "Songti SC", "STSong", serif;
           background:
-            radial-gradient(circle at top left, rgba(160, 48, 45, 0.14), transparent 30%),
-            radial-gradient(circle at top right, rgba(35, 92, 121, 0.12), transparent 28%),
-            linear-gradient(180deg, #f9f3ea 0%, var(--bg) 100%);
+            radial-gradient(circle at top left, rgba(160, 50, 45, 0.14), transparent 28%),
+            radial-gradient(circle at top right, rgba(35, 92, 121, 0.12), transparent 26%),
+            linear-gradient(180deg, #faf4ea 0%, var(--bg) 100%);
         }}
         a {{ color: inherit; text-decoration: none; }}
-        .shell {{ max-width: 1240px; margin: 0 auto; padding: 24px 16px 48px; }}
+        .shell {{ max-width: 1220px; margin: 0 auto; padding: 22px 16px 44px; }}
         .hero {{
           border: 1px solid var(--line);
           border-radius: 28px;
-          background: linear-gradient(135deg, rgba(255,255,255,0.96), rgba(248,241,233,0.9));
+          background: linear-gradient(135deg, rgba(255,255,255,0.96), rgba(247,240,231,0.92));
           box-shadow: var(--shadow);
           padding: 24px;
         }}
@@ -285,7 +294,7 @@ async def read_news(
           align-items: center;
           padding: 7px 12px;
           border-radius: 999px;
-          background: rgba(160, 48, 45, 0.08);
+          background: rgba(160, 50, 45, 0.08);
           color: var(--accent);
           font-size: 13px;
           font-weight: 700;
@@ -294,90 +303,95 @@ async def read_news(
         }}
         .hero h1 {{
           margin: 12px 0 8px;
-          font-size: clamp(32px, 4vw, 48px);
+          font-size: clamp(30px, 4vw, 46px);
           line-height: 1.08;
         }}
         .hero p {{
           margin: 0;
-          max-width: 820px;
+          max-width: 860px;
           color: var(--muted);
           line-height: 1.75;
         }}
+        .nav-row {{
+          display: flex;
+          flex-wrap: wrap;
+          gap: 10px;
+          margin-top: 16px;
+        }}
+        .nav-link, .pager-link {{
+          display: inline-flex;
+          align-items: center;
+          justify-content: center;
+          padding: 10px 14px;
+          min-height: 42px;
+          border-radius: 999px;
+          border: 1px solid var(--line);
+          background: rgba(255,255,255,0.86);
+          color: var(--ink);
+          transition: transform 0.15s ease, opacity 0.15s ease;
+        }}
+        .nav-link.active, .pager-link.current {{
+          background: var(--accent);
+          border-color: transparent;
+          color: white;
+        }}
+        .nav-link:hover, .pager-link:hover {{
+          transform: translateY(-1px);
+          opacity: 0.96;
+        }}
         .toolbar {{
-          margin-top: 18px;
           display: grid;
           gap: 12px;
+          margin-top: 16px;
         }}
-        .toolbar form,
-        .toolbar .actions {{
+        .search-form, .actions {{
           display: flex;
           flex-wrap: wrap;
           gap: 10px;
           align-items: center;
         }}
-        .search-box {{
-          display: flex;
-          flex-wrap: wrap;
-          gap: 10px;
-          align-items: center;
+        .search-form {{
           padding: 10px 12px;
           border: 1px solid var(--line);
           border-radius: 999px;
           background: rgba(255,255,255,0.88);
         }}
-        .search-box input,
-        .search-box select,
-        select, button, .ghost-link {{
-          font: inherit;
-        }}
-        .search-box input {{
+        .search-form input {{
           flex: 1 1 320px;
           border: 0;
           background: transparent;
           outline: none;
           color: var(--ink);
-          font-size: 15px;
+          font: inherit;
         }}
-        .search-box input::placeholder {{ color: #8b98a6; }}
-        select {{
+        .search-form select,
+        button {{
+          font: inherit;
+        }}
+        .search-form select {{
           border: 1px solid var(--line);
           border-radius: 999px;
+          padding: 10px 14px;
+          min-height: 42px;
           background: rgba(255,255,255,0.94);
+        }}
+        button {{
           padding: 10px 16px;
           min-height: 42px;
-        }}
-        button, .ghost-link, .pager-link {{
           border: 1px solid transparent;
           border-radius: 999px;
-          padding: 10px 16px;
-          min-height: 42px;
           background: var(--accent);
           color: white;
           cursor: pointer;
-          transition: transform 0.15s ease, opacity 0.15s ease;
         }}
-        button:hover, .ghost-link:hover, .pager-link:hover {{ transform: translateY(-1px); opacity: 0.96; }}
-        .ghost-link {{ background: rgba(35, 92, 121, 0.95); }}
-        .chip-row {{
-          display: flex;
-          flex-wrap: wrap;
-          gap: 10px;
-          margin-top: 6px;
-        }}
-        .chip {{
+        .ghost-link {{
           display: inline-flex;
           align-items: center;
-          padding: 8px 12px;
+          min-height: 42px;
+          padding: 10px 16px;
           border-radius: 999px;
-          border: 1px solid var(--line);
-          background: rgba(255,255,255,0.76);
-          font-size: 14px;
-        }}
-        mark {{
-          padding: 0 4px;
-          border-radius: 6px;
-          background: rgba(255, 206, 92, 0.72);
-          color: inherit;
+          background: rgba(35, 92, 121, 0.96);
+          color: white;
         }}
         .stats {{
           display: grid;
@@ -401,27 +415,21 @@ async def read_news(
           font-size: 18px;
           font-weight: 700;
         }}
-        .notice {{
-          margin-top: 12px;
-          padding: 13px 14px;
-          border-radius: 16px;
-          border: 1px solid var(--line);
-          background: rgba(255,255,255,0.78);
-          line-height: 1.7;
-        }}
-        .compact {{ margin-top: 10px; }}
         .layout {{
           display: grid;
-          grid-template-columns: minmax(0, 1.5fr) minmax(320px, 0.9fr);
+          grid-template-columns: minmax(0, 1.55fr) minmax(320px, 0.95fr);
           gap: 18px;
           margin-top: 18px;
           align-items: start;
+        }}
+        .side-stack {{
+          display: grid;
+          gap: 18px;
         }}
         .panel {{
           border: 1px solid var(--line);
           border-radius: 24px;
           background: var(--panel);
-          backdrop-filter: blur(10px);
           box-shadow: var(--shadow);
           padding: 20px;
         }}
@@ -442,15 +450,12 @@ async def read_news(
           font-size: 14px;
           line-height: 1.7;
         }}
-        .side-stack {{
-          display: grid;
-          gap: 18px;
-        }}
         .news-card {{
           padding: 14px 0;
         }}
-        .news-card + .news-card {{
-          border-top: 1px solid rgba(35, 43, 51, 0.08);
+        .news-card + .news-card,
+        .mini-card + .mini-card {{
+          border-top: 1px solid rgba(35,43,51,0.08);
         }}
         .news-meta {{
           display: flex;
@@ -463,37 +468,46 @@ async def read_news(
         .news-meta span + span::before {{
           content: "·";
           margin-right: 10px;
-          color: #9aa8b4;
+          color: #97a5b2;
         }}
-        .news-card h4 {{
+        .news-card h4, .mini-card h4 {{
           margin: 0 0 6px;
-          font-size: 18px;
           line-height: 1.55;
         }}
-        .news-card p {{
+        .news-card h4 {{ font-size: 18px; }}
+        .mini-card h4 {{ font-size: 16px; margin-top: 6px; }}
+        .news-card p, .mini-card p {{
           margin: 0;
           color: #2d3740;
           line-height: 1.72;
         }}
-        .mini-card + .mini-card {{
-          margin-top: 12px;
-          padding-top: 12px;
-          border-top: 1px solid rgba(35, 43, 51, 0.08);
-        }}
-        .mini-card h4 {{
-          margin: 5px 0 6px;
-          font-size: 16px;
-          line-height: 1.5;
-        }}
-        .mini-card p {{
-          margin: 0;
-          font-size: 14px;
-          color: #2e3942;
-          line-height: 1.68;
+        .mini-card {{
+          padding: 12px 0;
         }}
         .mini-date {{
-          color: var(--muted);
           font-size: 12px;
+          color: var(--muted);
+        }}
+        .year-grid {{
+          display: grid;
+          grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+          gap: 12px;
+        }}
+        .year-card {{
+          padding: 16px;
+          border-radius: 18px;
+          border: 1px solid var(--line);
+          background: rgba(255,255,255,0.74);
+        }}
+        .year-card strong {{
+          display: block;
+          font-size: 22px;
+          color: var(--accent);
+          margin-bottom: 6px;
+        }}
+        .year-card span {{
+          color: var(--muted);
+          font-size: 14px;
         }}
         .sync-grid {{
           display: grid;
@@ -504,8 +518,8 @@ async def read_news(
         .sync-item {{
           padding: 12px;
           border-radius: 16px;
-          border: 1px solid rgba(35, 43, 51, 0.08);
-          background: rgba(255,255,255,0.74);
+          border: 1px solid rgba(35,43,51,0.08);
+          background: rgba(255,255,255,0.72);
         }}
         .sync-item strong {{
           display: block;
@@ -528,16 +542,25 @@ async def read_news(
           font-weight: 700;
         }}
         .status-badge.busy {{
-          background: rgba(160, 48, 45, 0.12);
+          background: rgba(160, 50, 45, 0.12);
           color: var(--accent);
         }}
+        .notice {{
+          margin-top: 12px;
+          padding: 13px 14px;
+          border-radius: 16px;
+          border: 1px solid var(--line);
+          background: rgba(255,255,255,0.78);
+          line-height: 1.7;
+        }}
+        .compact {{ margin-top: 10px; }}
         .compact-actions {{
           margin-top: 10px;
         }}
         details.month-block {{
-          border: 1px solid rgba(35, 43, 51, 0.08);
+          border: 1px solid rgba(35,43,51,0.08);
           border-radius: 18px;
-          background: rgba(255,255,255,0.68);
+          background: rgba(255,255,255,0.7);
           padding: 0 14px 8px;
         }}
         details.month-block + details.month-block {{
@@ -567,9 +590,6 @@ async def read_news(
         details[open] > summary.month-title::after {{
           content: "收起";
         }}
-        .month-body {{
-          padding-bottom: 6px;
-        }}
         .pager {{
           display: flex;
           flex-wrap: wrap;
@@ -578,7 +598,8 @@ async def read_news(
         }}
         .pager-link {{
           background: rgba(35, 92, 121, 0.92);
-          font-size: 14px;
+          color: white;
+          border: 0;
         }}
         .pager-link.current {{
           background: var(--accent);
@@ -587,16 +608,29 @@ async def read_news(
         .empty-state {{
           padding: 18px;
           border-radius: 18px;
-          border: 1px dashed rgba(160, 48, 45, 0.28);
-          background: rgba(255, 248, 242, 0.84);
+          border: 1px dashed rgba(160,50,45,0.28);
+          background: rgba(255,248,242,0.84);
+          color: #5c4640;
           line-height: 1.8;
-          color: #5b4540;
         }}
-        .empty-wide {{ margin-top: 16px; }}
-        .small-link {{
-          color: var(--accent-2);
+        .helper-list {{
+          display: grid;
+          gap: 10px;
+        }}
+        .helper-chip {{
+          display: inline-flex;
+          align-items: center;
+          padding: 8px 12px;
+          border-radius: 999px;
+          border: 1px solid var(--line);
+          background: rgba(255,255,255,0.76);
           font-size: 14px;
-          font-weight: 700;
+        }}
+        mark {{
+          padding: 0 4px;
+          border-radius: 6px;
+          background: rgba(255, 206, 92, 0.72);
+          color: inherit;
         }}
         @media (max-width: 1080px) {{
           .layout {{ grid-template-columns: 1fr; }}
@@ -605,9 +639,7 @@ async def read_news(
         @media (max-width: 720px) {{
           .shell {{ padding-inline: 12px; }}
           .hero {{ padding: 20px; }}
-          .stats {{ grid-template-columns: 1fr; }}
-          .sync-grid {{ grid-template-columns: 1fr; }}
-          .panel {{ padding: 18px; }}
+          .stats, .sync-grid {{ grid-template-columns: 1fr; }}
         }}
       </style>
     </head>
@@ -615,106 +647,37 @@ async def read_news(
       <main class="shell">
         <section class="hero">
           <div class="eyebrow">Political News System</div>
-          <h1>时政资料库</h1>
-          <p>{escape(range_label)}</p>
+          <h1>{escape(hero_title)}</h1>
+          <p>{escape(hero_text)}</p>
+
+          <div class="nav-row">{_render_nav(active_tab)}</div>
 
           <div class="toolbar">
-            <form method="get" action="/" class="search-box">
-              <input type="text" name="q" value="{escape(q or '')}" placeholder="搜索标题、正文、来源、日期或栏目关键词" />
-              <select name="year">{_build_year_options(current_year, years, year)}</select>
-              <button type="submit">搜索</button>
-              <a class="small-link" href="/">清空</a>
+            <form method="get" action="/search" class="search-form">
+              <input type="text" name="q" value="{escape(search_query)}" placeholder="搜索标题、正文、来源或日期关键词" />
+              <select name="year">{_render_year_select(year_counts, current_year, selected_year)}</select>
+              <button type="submit">搜索数据库</button>
+              <a class="ghost-link" href="/status">去同步页面</a>
             </form>
-            <div class="actions">
-              <form method="get" action="/sync-view">
-                <input type="hidden" name="year" value="{current_year}" />
-                <button type="submit">同步本年</button>
-              </form>
-              <form method="get" action="/backfill-view">
-                <input type="hidden" name="months" value="24" />
-                <button type="submit">分批回填近两年</button>
-              </form>
-              <a class="ghost-link" href="#sync-panel">查看同步状态</a>
-            </div>
           </div>
 
-          <div class="chip-row">
-            <a class="chip" href="#archive">按月归档</a>
-            <a class="chip" href="#today-news">今日时政</a>
-            <a class="chip" href="#yesterday-news">昨日时政</a>
-            <a class="chip" href="#recent-updates">最近更新</a>
-            <span class="chip">{escape(selected_year)}</span>
-          </div>
-
-          <div class="stats">
-            <div class="stat"><strong>当前筛选</strong><span>{escape(selected_year)}</span></div>
-            <div class="stat"><strong>结果总数</strong><span>{escape(result_label)}</span></div>
-            <div class="stat"><strong>最新发布日期</strong><span>{escape(latest_value)}</span></div>
-            <div class="stat"><strong>归档页码</strong><span>第 {current_page} / {total_pages} 页</span></div>
-          </div>
+          <div class="stats">{stats_html}</div>
         </section>
 
-        {empty_state}
-
         <section class="layout">
-          <section class="panel" id="archive">
-            <div class="panel-head">
-              <div>
-                <h2>按月归档</h2>
-                <div class="panel-subtitle">默认折叠显示，每页展示 {MONTHS_PER_PAGE} 个月。需要时展开具体月份阅读。</div>
-              </div>
-              <span class="small-link">共 {len(all_groups)} 个月</span>
-            </div>
-            {_render_month_groups(visible_groups, keyword=q)}
-            {_render_pagination(current_page, total_pages, year, q)}
-          </section>
-
-          <aside class="side-stack">
-            {_render_sync_panel(task_status, last_sync_at, last_sync_result)}
-
-            <section class="panel" id="today-news">
-              <div class="panel-head">
-                <div>
-                  <h2>{escape(today_title)}</h2>
-                  <div class="panel-subtitle">基于当前筛选条件动态显示。</div>
-                </div>
-                <span class="small-link">{len(today_items)} 条</span>
-              </div>
-              {_render_news_list(today_items, "当前筛选下没有今日时政内容。", keyword=q)}
-            </section>
-
-            <section class="panel" id="yesterday-news">
-              <div class="panel-head">
-                <div>
-                  <h2>{escape(yesterday_title)}</h2>
-                  <div class="panel-subtitle">方便快速回看昨天的重要信息。</div>
-                </div>
-                <span class="small-link">{len(yesterday_items)} 条</span>
-              </div>
-              {_render_news_list(yesterday_items, "当前筛选下没有昨日时政内容。", keyword=q)}
-            </section>
-
-            <section class="panel" id="recent-updates">
-              <div class="panel-head">
-                <div>
-                  <h2>最近更新</h2>
-                  <div class="panel-subtitle">优先看最新入库内容，减少整页滚动负担。</div>
-                </div>
-                <span class="small-link">{min(len(context_items), 6)} 条</span>
-              </div>
-              {_render_recent_updates(context_items, keyword=q)}
-            </section>
-          </aside>
+          <div>{main_html}</div>
+          <aside class="side-stack">{side_html}</aside>
         </section>
       </main>
 
       <script>
         async function refreshSyncStatus() {{
+          const badge = document.getElementById('sync-badge');
+          if (!badge) return;
           try {{
             const response = await fetch('/sync-status', {{ cache: 'no-store' }});
             if (!response.ok) return;
             const data = await response.json();
-            const badge = document.getElementById('sync-badge');
             const scope = document.getElementById('sync-scope');
             const lastAt = document.getElementById('sync-last-at');
             const startedAt = document.getElementById('sync-started-at');
@@ -725,12 +688,12 @@ async def read_news(
             const busy = Boolean(data.in_progress);
             badge.textContent = busy ? '进行中' : '空闲';
             badge.classList.toggle('busy', busy);
-            scope.textContent = data.scope || '最近一次任务';
-            lastAt.textContent = data.last_sync_at || {json.dumps(last_sync_at, ensure_ascii=False)};
-            startedAt.textContent = data.started_at || '暂无记录';
-            finishedAt.textContent = data.finished_at || '暂无记录';
-            message.innerHTML = '<strong>当前状态：</strong>' + (data.message || '当前没有运行中的同步任务。');
-            lastResult.innerHTML = '<strong>最近结果：</strong>' + (data.last_result || '尚未有成功同步记录。');
+            if (scope) scope.textContent = data.scope || '最近一次任务';
+            if (lastAt) lastAt.textContent = data.last_sync_at || {json.dumps(get_app_state("last_sync_at", "尚未同步"), ensure_ascii=False)};
+            if (startedAt) startedAt.textContent = data.started_at || '暂无记录';
+            if (finishedAt) finishedAt.textContent = data.finished_at || '暂无记录';
+            if (message) message.innerHTML = '<strong>当前状态：</strong>' + (data.message || '当前没有运行中的同步任务。');
+            if (lastResult) lastResult.innerHTML = '<strong>最近结果：</strong>' + (data.last_result || '尚未有成功同步记录。');
           }} catch (error) {{
             console.warn('sync status refresh failed', error);
           }}
@@ -742,4 +705,319 @@ async def read_news(
     </body>
     </html>
     """
-    return HTMLResponse(content=html_content, status_code=200)
+    return HTMLResponse(content=html, status_code=200)
+
+
+def _shared_sidebar(year_counts: Dict[int, int], current_year: int, recent_items) -> str:
+    return (
+        "<section class='panel'>"
+        "<div class='panel-head'><div><h2>年份入口</h2><div class='panel-subtitle'>点击年份进入独立页面查看该年的全部时政。</div></div></div>"
+        + _render_year_grid(year_counts, current_year)
+        + "</section>"
+        + "<section class='panel'>"
+        "<div class='panel-head'><div><h2>最近更新</h2><div class='panel-subtitle'>这里展示数据库里最新写入的时政内容。</div></div></div>"
+        + _render_recent_updates(recent_items, "当前还没有最近更新内容。")
+        + "</section>"
+    )
+
+
+@router.get("/", response_class=HTMLResponse)
+@router.get("/latest", response_class=HTMLResponse)
+async def latest_page(page: int = Query(default=1, ge=1)):
+    current_year = datetime.now(LOCAL_TZ).year
+    recent_items, _ = query_news(year=None, search=None, months=24)
+    page_items, current_page, total_pages = _paginate_sequence(recent_items, page, ITEMS_PER_PAGE)
+    year_counts = get_year_counts(min_year=MIN_FILTER_YEAR)
+    latest_date = latest_news_date(recent_items)
+
+    main_html = (
+        "<section class='panel'>"
+        "<div class='panel-head'><div><h2>最新时政</h2><div class='panel-subtitle'>全部内容直接从数据库读取，按发布时间倒序展示。</div></div>"
+        f"<span>{len(recent_items)} 条</span></div>"
+        + _render_news_stream(page_items, "数据库中还没有最近两年的时政内容，请先同步。")
+        + _render_pager("/", current_page, total_pages)
+        + "</section>"
+    )
+
+    side_html = _shared_sidebar(year_counts, current_year, recent_items)
+    stats = [
+        ("数据库总条数", str(count_news_records())),
+        ("最近两年条数", str(len(recent_items))),
+        ("最新发布日期", latest_date.strftime("%Y-%m-%d") if latest_date else "暂无数据"),
+        ("当前页码", f"{current_page}/{total_pages}"),
+    ]
+    return _render_layout(
+        active_tab="latest",
+        hero_title="最新时政",
+        hero_text="这里是最适合日常打开的主界面。所有内容直接从数据库读取，不再把多个视图堆在同一页里。",
+        stats=stats,
+        main_html=main_html,
+        side_html=side_html,
+        year_counts=year_counts,
+        current_year=current_year,
+        page_title="最新时政",
+    )
+
+
+@router.get("/today", response_class=HTMLResponse)
+async def today_page(page: int = Query(default=1, ge=1)):
+    current_year = datetime.now(LOCAL_TZ).year
+    recent_items, _ = query_news(year=None, search=None, months=24)
+    items, title = today_news(recent_items, limit=None)
+    page_items, current_page, total_pages = _paginate_sequence(items, page, ITEMS_PER_PAGE)
+    year_counts = get_year_counts(min_year=MIN_FILTER_YEAR)
+
+    main_html = (
+        "<section class='panel'>"
+        f"<div class='panel-head'><div><h2>{escape(title)}</h2><div class='panel-subtitle'>只显示数据库里日期为今天的内容。</div></div><span>{len(items)} 条</span></div>"
+        + _render_news_stream(page_items, "今天还没有抓取到时政内容。")
+        + _render_pager("/today", current_page, total_pages)
+        + "</section>"
+    )
+
+    return _render_layout(
+        active_tab="today",
+        hero_title="今日时政",
+        hero_text="适合当天快速刷一遍。这里只显示数据库中归档为今天的时政内容。",
+        stats=[
+            ("今日条数", str(len(items))),
+            ("数据库总条数", str(count_news_records())),
+            ("年份覆盖", f"{min(_visible_years(year_counts, current_year), default=current_year)}-{current_year}"),
+            ("当前页码", f"{current_page}/{total_pages}"),
+        ],
+        main_html=main_html,
+        side_html=_shared_sidebar(year_counts, current_year, recent_items),
+        year_counts=year_counts,
+        current_year=current_year,
+        page_title="今日时政",
+    )
+
+
+@router.get("/yesterday", response_class=HTMLResponse)
+async def yesterday_page(page: int = Query(default=1, ge=1)):
+    current_year = datetime.now(LOCAL_TZ).year
+    recent_items, _ = query_news(year=None, search=None, months=24)
+    items, title = yesterday_news(recent_items, limit=None)
+    page_items, current_page, total_pages = _paginate_sequence(items, page, ITEMS_PER_PAGE)
+    year_counts = get_year_counts(min_year=MIN_FILTER_YEAR)
+
+    main_html = (
+        "<section class='panel'>"
+        f"<div class='panel-head'><div><h2>{escape(title)}</h2><div class='panel-subtitle'>单独拎出来做一页，方便回看昨天的重要信息。</div></div><span>{len(items)} 条</span></div>"
+        + _render_news_stream(page_items, "昨天还没有抓取到时政内容。")
+        + _render_pager("/yesterday", current_page, total_pages)
+        + "</section>"
+    )
+
+    return _render_layout(
+        active_tab="yesterday",
+        hero_title="昨日时政",
+        hero_text="如果你是隔天集中看新闻，这页会比长首页更顺手。",
+        stats=[
+            ("昨日条数", str(len(items))),
+            ("数据库总条数", str(count_news_records())),
+            ("年份覆盖", f"{min(_visible_years(year_counts, current_year), default=current_year)}-{current_year}"),
+            ("当前页码", f"{current_page}/{total_pages}"),
+        ],
+        main_html=main_html,
+        side_html=_shared_sidebar(year_counts, current_year, recent_items),
+        year_counts=year_counts,
+        current_year=current_year,
+        page_title="昨日时政",
+    )
+
+
+@router.get("/archive", response_class=HTMLResponse)
+async def archive_page(page: int = Query(default=1, ge=1)):
+    current_year = datetime.now(LOCAL_TZ).year
+    recent_items, _ = query_news(year=None, search=None, months=24)
+    groups = group_by_month(recent_items)
+    entries = list(groups.items())
+    page_entries, current_page, total_pages = _paginate_sequence(entries, page, MONTHS_PER_PAGE)
+    visible_groups = OrderedDict(page_entries)
+    year_counts = get_year_counts(min_year=MIN_FILTER_YEAR)
+
+    main_html = (
+        "<section class='panel'>"
+        "<div class='panel-head'><div><h2>按月归档</h2><div class='panel-subtitle'>默认折叠显示，每页只看少量月份，避免页面过长。</div></div>"
+        f"<span>{len(groups)} 个月</span></div>"
+        + _render_month_groups(visible_groups)
+        + _render_pager("/archive", current_page, total_pages)
+        + "</section>"
+    )
+
+    return _render_layout(
+        active_tab="archive",
+        hero_title="按月归档",
+        hero_text="适合系统复习。每个月是独立折叠块，展开后查看该月全部时政内容。",
+        stats=[
+            ("归档月份", str(len(groups))),
+            ("最近两年条数", str(len(recent_items))),
+            ("数据库总条数", str(count_news_records())),
+            ("当前页码", f"{current_page}/{total_pages}"),
+        ],
+        main_html=main_html,
+        side_html=_shared_sidebar(year_counts, current_year, recent_items),
+        year_counts=year_counts,
+        current_year=current_year,
+        page_title="按月归档",
+    )
+
+
+@router.get("/years", response_class=HTMLResponse)
+async def years_page():
+    current_year = datetime.now(LOCAL_TZ).year
+    year_counts = get_year_counts(min_year=MIN_FILTER_YEAR)
+    recent_items, _ = query_news(year=None, search=None, months=24)
+
+    main_html = (
+        "<section class='panel'>"
+        "<div class='panel-head'><div><h2>年份切换</h2><div class='panel-subtitle'>每个年份都是独立页面，避免在首页里混用筛选器。</div></div></div>"
+        + _render_year_grid(year_counts, current_year)
+        + "</section>"
+    )
+
+    return _render_layout(
+        active_tab="years",
+        hero_title="年份切换",
+        hero_text="从这里进入某个年份的独立页面查看，不再把所有年份塞进一个下拉框里强行复用。",
+        stats=[
+            ("可查看年份", str(len(_visible_years(year_counts, current_year)))),
+            ("最早年份", str(min(_visible_years(year_counts, current_year), default=current_year))),
+            ("数据库总条数", str(count_news_records())),
+            ("最近两年条数", str(len(recent_items))),
+        ],
+        main_html=main_html,
+        side_html=_shared_sidebar(year_counts, current_year, recent_items),
+        year_counts=year_counts,
+        current_year=current_year,
+        page_title="年份切换",
+    )
+
+
+@router.get("/year/{year}", response_class=HTMLResponse)
+async def year_detail_page(year: int, page: int = Query(default=1, ge=1)):
+    current_year = datetime.now(LOCAL_TZ).year
+    items, _ = query_news(year=year, search=None, months=None)
+    page_items, current_page, total_pages = _paginate_sequence(items, page, ITEMS_PER_PAGE)
+    year_counts = get_year_counts(min_year=MIN_FILTER_YEAR)
+    recent_items, _ = query_news(year=None, search=None, months=24)
+
+    main_html = (
+        "<section class='panel'>"
+        f"<div class='panel-head'><div><h2>{year} 年时政</h2><div class='panel-subtitle'>该页面只展示 {year} 年的数据库内容。</div></div><span>{len(items)} 条</span></div>"
+        + _render_news_stream(page_items, f"{year} 年还没有同步到数据库。")
+        + _render_pager(f"/year/{year}", current_page, total_pages)
+        + "</section>"
+    )
+
+    return _render_layout(
+        active_tab="years",
+        hero_title=f"{year} 年时政",
+        hero_text="这是年份独立页面，适合按年梳理资料，不需要在首页里来回切换。",
+        stats=[
+            ("年份", str(year)),
+            ("当年条数", str(len(items))),
+            ("数据库总条数", str(count_news_records())),
+            ("当前页码", f"{current_page}/{total_pages}"),
+        ],
+        main_html=main_html,
+        side_html=_shared_sidebar(year_counts, current_year, recent_items),
+        year_counts=year_counts,
+        current_year=current_year,
+        selected_year=year,
+        page_title=f"{year} 年时政",
+    )
+
+
+@router.get("/search", response_class=HTMLResponse)
+async def search_page(
+    q: Optional[str] = Query(default=None),
+    year: Optional[int] = Query(default=None),
+    page: int = Query(default=1, ge=1),
+):
+    current_year = datetime.now(LOCAL_TZ).year
+    keyword = (q or "").strip()
+    items = []
+    years = []
+    if keyword:
+        items, years = query_news(year=year, search=keyword, months=None)
+    year_counts = get_year_counts(min_year=MIN_FILTER_YEAR)
+    recent_items, _ = query_news(year=None, search=None, months=24)
+    page_items, current_page, total_pages = _paginate_sequence(items, page, ITEMS_PER_PAGE)
+
+    subtitle = "输入关键词后会直接在数据库中搜索标题、摘要、正文、来源和日期。"
+    if year:
+        subtitle = f"当前把搜索范围限制在 {year} 年。"
+
+    main_html = (
+        "<section class='panel'>"
+        f"<div class='panel-head'><div><h2>搜索结果</h2><div class='panel-subtitle'>{escape(subtitle)}</div></div><span>{len(items)} 条</span></div>"
+        + (
+            _render_news_stream(page_items, "请输入关键词后开始搜索。" if not keyword else f"没有找到关键词「{keyword}」匹配的内容。", keyword=keyword)
+        )
+        + _render_pager("/search", current_page, total_pages, q=keyword, year=year)
+        + "</section>"
+    )
+
+    side_html = (
+        "<section class='panel'>"
+        "<div class='panel-head'><div><h2>搜索提示</h2><div class='panel-subtitle'>建议使用会议、政策、人物、地区或发布日期关键词组合检索。</div></div></div>"
+        "<div class='helper-list'>"
+        "<span class='helper-chip'>例：中央政治局</span>"
+        "<span class='helper-chip'>例：政府工作报告</span>"
+        "<span class='helper-chip'>例：2025-03</span>"
+        "<span class='helper-chip'>例：人民网</span>"
+        "</div>"
+        "</section>"
+        + _shared_sidebar(year_counts, current_year, recent_items)
+    )
+
+    return _render_layout(
+        active_tab="search",
+        hero_title="搜索数据库",
+        hero_text="搜索页只做一件事：从数据库里查。这样结果更直接，也更容易理解。",
+        stats=[
+            ("搜索关键词", keyword or "未输入"),
+            ("命中结果", str(len(items))),
+            ("年份限制", str(year) if year else "全部年份"),
+            ("当前页码", f"{current_page}/{total_pages}"),
+        ],
+        main_html=main_html,
+        side_html=side_html,
+        year_counts=year_counts,
+        current_year=current_year,
+        selected_year=year,
+        search_query=keyword,
+        page_title="搜索数据库",
+    )
+
+
+@router.get("/status", response_class=HTMLResponse)
+async def status_page(sync_status: str = Query(default="")):
+    current_year = datetime.now(LOCAL_TZ).year
+    year_counts = get_year_counts(min_year=MIN_FILTER_YEAR)
+    recent_items, _ = query_news(year=None, search=None, months=24)
+    task_status = get_sync_status()
+    last_sync_at = get_app_state("last_sync_at", "尚未同步")
+    last_sync_result = sync_status or get_app_state("last_sync_result", "")
+
+    main_html = _render_sync_panel(task_status, last_sync_at, last_sync_result)
+    side_html = _shared_sidebar(year_counts, current_year, recent_items)
+
+    return _render_layout(
+        active_tab="status",
+        hero_title="同步状态",
+        hero_text="这里专门负责同步相关信息和按钮，不再把同步说明塞进首页角落里。",
+        stats=[
+            ("当前状态", "进行中" if task_status["in_progress"] else "空闲"),
+            ("最近同步", last_sync_at),
+            ("数据库总条数", str(count_news_records())),
+            ("最近两年条数", str(len(recent_items))),
+        ],
+        main_html=main_html,
+        side_html=side_html,
+        year_counts=year_counts,
+        current_year=current_year,
+        page_title="同步状态",
+    )

@@ -7,7 +7,7 @@ from typing import Any, Callable, Dict, List, Optional, Tuple
 
 from app.database import SessionLocal
 from app.fetch_news import fetch_news, save_news_to_db
-from app.models import AppState
+from app.models import AppState, News
 
 logger = logging.getLogger(__name__)
 
@@ -71,6 +71,33 @@ def get_sync_status() -> Dict[str, Any]:
         "last_sync_at": get_app_state("last_sync_at", ""),
         "last_result": get_app_state("last_sync_result", ""),
     }
+
+
+def has_recent_two_years_data(months: int = 24) -> bool:
+    db = SessionLocal()
+    try:
+        total = db.query(News.id).count()
+        if total == 0:
+            return False
+
+        oldest = db.query(News.published_at).order_by(News.published_at.asc()).first()
+        latest = db.query(News.published_at).order_by(News.published_at.desc()).first()
+        years = {value[0] for value in db.query(News.year).distinct().all()}
+
+        if not oldest or not latest:
+            return False
+
+        now = datetime.utcnow()
+        cutoff = now - timedelta(days=max(months, 1) * 30 - 14)
+        required_years = {now.year, now.year - 1}
+
+        return (
+            oldest[0] <= cutoff
+            and latest[0] >= now - timedelta(days=14)
+            and required_years.issubset(years)
+        )
+    finally:
+        db.close()
 
 
 def reset_stale_sync_state() -> None:

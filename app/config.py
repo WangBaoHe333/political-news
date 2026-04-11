@@ -11,9 +11,11 @@ def _truthy_env(name: str, default: str = "0") -> bool:
 @dataclass(frozen=True)
 class Settings:
     auto_sync_on_startup: bool
+    bootstrap_recent_news_on_startup: bool
 
 
 def get_settings() -> Settings:
     return Settings(
         auto_sync_on_startup=_truthy_env("AUTO_SYNC_ON_STARTUP", "0"),
+        bootstrap_recent_news_on_startup=_truthy_env("BOOTSTRAP_RECENT_NEWS_ON_STARTUP", "1"),
     )

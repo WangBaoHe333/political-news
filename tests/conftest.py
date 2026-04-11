@@ -44,3 +44,4 @@ def mock_env_vars(monkeypatch):
     """模拟环境变量"""
     monkeypatch.setenv("DATABASE_URL", "sqlite:///:memory:")
     monkeypatch.setenv("AUTO_SYNC_ON_STARTUP", "0")
+    monkeypatch.setenv("BOOTSTRAP_RECENT_NEWS_ON_STARTUP", "0")

@@ -44,10 +44,7 @@ async def sync_view(
     else:
         status = "已有后台同步任务在运行，请稍后刷新查看。"
     encoded_status = quote(status)
-    redirect_url = f"/?sync_status={encoded_status}"
-    if year:
-        redirect_url = f"/?year={year}&sync_status={encoded_status}"
-    return RedirectResponse(url=redirect_url, status_code=303)
+    return RedirectResponse(url=f"/status?sync_status={encoded_status}", status_code=303)
 
 
 @router.get("/sync-status")
@@ -68,7 +65,7 @@ async def backfill_view(
     else:
         status = "已有后台同步任务在运行，请稍后刷新查看。"
     encoded_status = quote(status)
-    return RedirectResponse(url=f"/?sync_status={encoded_status}", status_code=303)
+    return RedirectResponse(url=f"/status?sync_status={encoded_status}", status_code=303)
 
 
 @router.get("/health")

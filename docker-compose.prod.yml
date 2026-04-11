@@ -14,6 +14,7 @@ services:
     environment:
       - DATABASE_URL=postgresql://political_user:${POSTGRES_PASSWORD}@postgres:5432/political_news
       - AUTO_SYNC_ON_STARTUP=0
+      - BOOTSTRAP_RECENT_NEWS_ON_STARTUP=1
       - LOG_LEVEL=INFO
       - LOG_FORMAT=json
       - PYTHONUNBUFFERED=1
