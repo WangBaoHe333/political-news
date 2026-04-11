@@ -21,6 +21,10 @@ RUN pip install --no-cache-dir --upgrade pip && \
 # 生产阶段
 FROM python:3.9-slim
 
+# 健康检查与部分运维命令需要 curl（最终镜像在 HEALTHCHECK 中使用）
+RUN apt-get update && apt-get install -y --no-install-recommends curl \
+    && rm -rf /var/lib/apt/lists/*
+
 # 创建非root用户
 RUN groupadd -r appuser && useradd -r -g appuser appuser
 

@@ -105,11 +105,18 @@ jobs:
         ssh-keyscan -H $SERVER_IP >> ~/.ssh/known_hosts
 
         ssh $SERVER_USER@$SERVER_IP << 'EOF'
+          set -e
           cd /opt/political-news
           git pull origin main
-          docker-compose down
-          docker-compose build --no-cache
-          docker-compose up -d
-          sleep 10
-          docker-compose ps
+          if docker compose version >/dev/null 2>&1; then
+            DC="docker compose"
+          else
+            DC="docker-compose"
+          fi
+          $DC down || true
+          $DC build --no-cache
+          $DC up -d
+          sleep 12
+          $DC ps
+          curl -sf http://127.0.0.1:8000/health && echo "" && echo "health OK" || true
         EOF
