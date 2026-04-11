@@ -173,42 +173,6 @@ def _render_scroll_shell(content: str, variant: str = "stream") -> str:
     return f"<div class='scroll-shell {variant}'>{content}</div>"
 
 
-def _render_headline_block(item, supporting_items) -> str:
-    if item is None:
-        return "<section class='panel'><div class='empty-state'>当前还没有可展示的头条内容。</div></section>"
-
-    lead_title = escape(item.title)
-    lead_excerpt = escape((item.summary or item.content or item.title or "")[:220])
-    lead_published = escape(item.published or item.published_at.strftime("%Y-%m-%d"))
-    support_html = "".join(
-        "<article class='headline-mini'>"
-        f"<span>{escape(other.published or other.published_at.strftime('%Y-%m-%d'))}</span>"
-        f"<a href='/news/{other.id}'>{escape(other.title)}</a>"
-        "</article>"
-        for other in supporting_items
-    )
-    return (
-        "<section class='panel'>"
-        "<div class='panel-head'><div><h2>今日头条</h2><div class='panel-subtitle'>首页先看头条，再看专题和来源，整体会更像资讯门户。</div></div></div>"
-        "<div class='headline-layout'>"
-        "<article class='headline-lead'>"
-        f"<div class='news-meta'><span>{lead_published}</span><span>{escape(source_label(item.source))}</span></div>"
-        f"{_render_source_signature(item)}"
-        f"<h3><a href='/news/{item.id}'>{lead_title}</a></h3>"
-        f"<p>{lead_excerpt}</p>"
-        "<div class='card-actions'>"
-        f"<a class='inline-link' href='/news/{item.id}'>站内查看</a>"
-        f"<a class='inline-link' href='{escape(item.link)}' target='_blank' rel='noreferrer'>查看原文</a>"
-        "</div>"
-        "</article>"
-        "<div class='headline-side'>"
-        + (support_html or "<div class='empty-state'>暂时没有更多头条。</div>")
-        + "</div>"
-        "</div>"
-        "</section>"
-    )
-
-
 def _render_category_shelves(items: Sequence, limit_categories: int = 4, per_category: int = 4) -> str:
     grouped: Dict[str, List] = {}
     for item in items:
@@ -1279,15 +1243,10 @@ def _shared_sidebar(
     active_source: Optional[str] = None,
     **source_params,
 ) -> str:
-    category_counts = _category_counts(recent_items)
     return (
         "<section class='panel'>"
-        "<div class='panel-head'><div><h2>来源筛选</h2><div class='panel-subtitle'>这里保留一个最必要的辅助筛选，其余重复入口全部收掉。</div></div></div>"
+        "<div class='panel-head'><div><h2>来源筛选</h2><div class='panel-subtitle'>只保留一个必要筛选，不再重复堆专题入口和来源入口。</div></div></div>"
         + _render_source_grid(source_counts, active_source, source_path, **source_params)
-        + "</section>"
-        + "<section class='panel'>"
-        "<div class='panel-head'><div><h2>专题入口</h2><div class='panel-subtitle'>把时政按主题拆开后，网站才更像一个产品。</div></div></div>"
-        + _render_category_overview(category_counts)
         + "</section>"
     )
 
@@ -1355,7 +1314,6 @@ async def today_page(
     current_year = datetime.now(LOCAL_TZ).year
     all_recent_items, _ = query_news(year=None, search=None, months=24)
     source_counts = _source_counts(all_recent_items)
-    category_counts = _category_counts(all_recent_items)
     filtered_recent_items = _filter_items_by_source(all_recent_items, source)
     items, title = today_news(filtered_recent_items, limit=None)
     display_items = items or filtered_recent_items
@@ -1367,32 +1325,19 @@ async def today_page(
     )
     page_items, current_page, total_pages = _paginate_sequence(display_items, page, ITEMS_PER_PAGE)
     year_counts = get_year_counts(min_year=MIN_FILTER_YEAR)
-    headline_items = display_items
-    lead_story = headline_items[0] if headline_items else None
-    supporting_items = headline_items[1:5] if len(headline_items) > 1 else []
 
     main_html = (
-        _render_headline_block(lead_story, supporting_items)
-        + "<section class='panel'>"
+        "<section class='panel'>"
         f"<div class='panel-head'><div><h2>{escape(display_title)}</h2><div class='panel-subtitle'>{escape(display_subtitle)}</div></div><span>{len(display_items)} 条</span></div>"
         + _render_scroll_shell(_render_news_stream(page_items, "数据库里还没有可展示的内容。"))
         + _render_pager("/today", current_page, total_pages, source=source)
         + "</section>"
-        + "<section class='panel'>"
-        "<div class='panel-head'><div><h2>分类专题</h2><div class='panel-subtitle'>按专题聚合后，网站才真正有了入口结构，而不是一长串列表。</div></div></div>"
-        + _render_category_overview(category_counts)
-        + "</section>"
-        + "<section class='panel'>"
-        "<div class='panel-head'><div><h2>权威来源</h2><div class='panel-subtitle'>把权威来源单独做成入口，方便直接按站点回看和校验。</div></div></div>"
-        + _render_source_overview(source_counts)
-        + "</section>"
-        + _render_category_shelves(filtered_recent_items)
     )
 
     return _render_layout(
         active_tab="today",
         hero_title="今日时政",
-        hero_text="适合当天快速刷一遍。若当天暂时没有新内容，首页会自动回退展示最近更新，避免出现空白页。",
+        hero_text="首页只保留今日时政主列表和必要筛选。专题、来源、同步状态都回到各自独立页面，减少重复入口。",
         stats=[
             ("今日条数", str(len(items))),
             ("数据库总条数", str(count_news_records())),
@@ -1476,19 +1421,16 @@ async def categories_page():
 
     main_html = (
         "<section class='panel'>"
-        "<div class='panel-head'><div><h2>分类专题</h2><div class='panel-subtitle'>把聚合站做成产品，核心不是多几个按钮，而是让用户能按主题直接进入。</div></div></div>"
+        "<div class='panel-head'><div><h2>分类专题</h2><div class='panel-subtitle'>专题入口和分类专题已经合并，这里就是统一的专题主页。</div></div></div>"
         + _render_category_overview(category_counts)
         + "</section>"
-        + "<section class='panel'>"
-        "<div class='panel-head'><div><h2>近期重点专题</h2><div class='panel-subtitle'>这里按分类聚合最近两年的收录结果，优先把权威发布、外交、人事这些高频专题做出来。</div></div></div>"
-        + _render_scroll_shell(_render_news_stream(recent_items[:8], "当前没有可展示的专题内容。"))
-        + "</section>"
+        + _render_category_shelves(recent_items, limit_categories=6, per_category=3)
     )
 
     return _render_layout(
         active_tab="categories",
         hero_title="分类专题",
-        hero_text="所有时政不该混成一条流水线。分类专题页负责把要闻、权威发布、外交、人事、国际等主题拆开。",
+        hero_text="分类页只做一件事：把多来源时政按专题聚起来，方便直接进入，不再和首页、来源页重复。",
         stats=[
             ("专题数量", str(len(category_counts))),
             ("数据库总条数", str(count_news_records())),
@@ -1496,13 +1438,7 @@ async def categories_page():
             ("来源数量", str(len([count for count in source_counts.values() if count > 0]))),
         ],
         main_html=main_html,
-        side_html=_shared_sidebar(
-            year_counts,
-            current_year,
-            recent_items,
-            source_counts,
-            "/categories",
-        ),
+        side_html=_render_source_health_panel(recent_items),
         year_counts=year_counts,
         source_counts=source_counts,
         current_year=current_year,
@@ -1570,17 +1506,16 @@ async def sources_page():
 
     main_html = (
         "<section class='panel'>"
-        "<div class='panel-head'><div><h2>数据源</h2><div class='panel-subtitle'>把来源单开一页，用户才能清楚我们到底聚合了哪些权威站点。</div></div></div>"
+        "<div class='panel-head'><div><h2>数据源</h2><div class='panel-subtitle'>来源页只负责展示站点覆盖和可信说明，不再混入专题入口。</div></div></div>"
         + _render_source_overview(source_counts)
         + "</section>"
         + _render_source_health_panel(recent_items)
-        + _render_quality_panel()
     )
 
     return _render_layout(
         active_tab="sources",
         hero_title="数据源",
-        hero_text="这个页面专门解释网站聚合了哪些权威来源、各来源的新鲜度，以及为什么这些来源值得信任。",
+        hero_text="这里专门看来源覆盖、来源新鲜度和站点可信说明，不再和首页、专题页混在一起。",
         stats=[
             ("来源数量", str(len([count for count in source_counts.values() if count > 0]))),
             ("数据库总条数", str(count_news_records())),
@@ -1588,13 +1523,7 @@ async def sources_page():
             ("当前收录", str(len(recent_items))),
         ],
         main_html=main_html,
-        side_html=_shared_sidebar(
-            year_counts,
-            current_year,
-            recent_items,
-            source_counts,
-            "/sources",
-        ),
+        side_html=_render_quality_panel(),
         year_counts=year_counts,
         source_counts=source_counts,
         current_year=current_year,
@@ -1972,18 +1901,17 @@ async def status_page(sync_status: str = Query(default="")):
     last_sync_result = sync_status or get_app_state("last_sync_result", "")
 
     main_html = _render_sync_panel(task_status, last_sync_at, last_sync_result) + _render_source_health_panel(recent_items)
-    side_html = _shared_sidebar(
-        year_counts,
-        current_year,
-        recent_items,
-        source_counts,
-        "/status",
+    side_html = (
+        "<section class='panel'>"
+        "<div class='panel-head'><div><h2>状态说明</h2><div class='panel-subtitle'>同步页只保留任务状态和来源健康，不再复用其他页面的通用模块。</div></div></div>"
+        "<div class='notice compact'><strong>当前用途：</strong>看任务是否在跑、最近一次结果、哪些来源有数据或断流。</div>"
+        "</section>"
     )
 
     return _render_layout(
         active_tab="status",
         hero_title="同步状态",
-        hero_text="这里专门负责同步相关信息和按钮，不再把同步说明塞进首页角落里。",
+        hero_text="同步状态页只负责两件事：任务状态和来源健康。它不再承担专题、搜索或来源导航。",
         stats=[
             ("当前状态", "进行中" if task_status["in_progress"] else "空闲"),
             ("最近同步", last_sync_at),

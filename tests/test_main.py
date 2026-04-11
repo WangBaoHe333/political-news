@@ -11,8 +11,7 @@ def test_home_page(client):
     response = client.get("/")
     assert response.status_code == 200
     assert "今日时政" in response.text
-    assert "分类专题" in response.text
-    assert "权威来源" in response.text
+    assert "只保留今日时政主列表和必要筛选" in response.text
     assert "同步状态" in response.text
     assert "只显示数据库里日期为今天的内容" in response.text
 
@@ -38,12 +37,14 @@ def test_categories_and_sources_pages(client):
     categories_response = client.get("/categories")
     assert categories_response.status_code == 200
     assert "分类专题" in categories_response.text
+    assert "专题入口和分类专题已经合并" in categories_response.text
 
     sources_response = client.get("/sources")
     assert sources_response.status_code == 200
     assert "数据源" in sources_response.text
     assert "来源覆盖" in sources_response.text
     assert "央视网" in sources_response.text
+    assert "来源页只负责展示站点覆盖和可信说明" in sources_response.text
 
 
 def test_search_page_with_filters_and_pagination(client):
@@ -143,6 +144,7 @@ def test_status_page(client):
     assert "同步状态" in response.text
     assert "同步近两年到数据库" in response.text
     assert "来源覆盖" in response.text
+    assert "同步页只保留任务状态和来源健康" in response.text
 
 
 def test_news_detail_page(client, monkeypatch):
