@@ -11,6 +11,8 @@ def test_home_page(client):
     response = client.get("/")
     assert response.status_code == 200
     assert "今日时政" in response.text
+    assert "分类专题" in response.text
+    assert "权威来源" in response.text
     assert "同步状态" in response.text
     assert "只显示数据库里日期为今天的内容" in response.text
 
@@ -29,6 +31,18 @@ def test_archive_page(client):
     assert response.status_code == 200
     assert "按月归档" in response.text
     assert "默认折叠显示" in response.text
+
+
+def test_categories_and_sources_pages(client):
+    """测试分类页和数据源页"""
+    categories_response = client.get("/categories")
+    assert categories_response.status_code == 200
+    assert "分类专题" in categories_response.text
+
+    sources_response = client.get("/sources")
+    assert sources_response.status_code == 200
+    assert "数据源" in sources_response.text
+    assert "来源覆盖" in sources_response.text
 
 
 def test_search_page_with_filters_and_pagination(client):
@@ -65,6 +79,13 @@ def test_year_pages(client):
     detail_response = client.get("/year/2025?page=1")
     assert detail_response.status_code == 200
     assert "2025 年时政" in detail_response.text
+
+
+def test_category_detail_page(client):
+    """测试分类详情页"""
+    response = client.get("/category/shizheng?page=1")
+    assert response.status_code == 200
+    assert "时政专题" in response.text
 
 
 def test_today_and_yesterday_pages(client):
@@ -144,6 +165,14 @@ def test_api_news_search_param(client):
     data = response.json()
     assert "query" in data
     assert isinstance(data["items"], list)
+
+
+def test_api_news_supports_category_param(client):
+    """测试新闻 API 支持分类参数"""
+    response = client.get("/api/news?category=%E6%97%B6%E6%94%BF")
+    assert response.status_code == 200
+    data = response.json()
+    assert "category" in data
 
 
 def test_api_today_news(client):

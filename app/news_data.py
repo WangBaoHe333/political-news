@@ -15,6 +15,7 @@ SOURCE_LABELS = {
     "people_cn": "人民网",
     "xinhuanet": "新华网",
     "chinanews": "中国新闻网",
+    "mfa": "外交部",
     "sina": "新浪新闻",
 }
 SOURCE_TRUST_LABELS = {
@@ -22,6 +23,7 @@ SOURCE_TRUST_LABELS = {
     "people_cn": "央媒报道",
     "xinhuanet": "央媒报道",
     "chinanews": "主流媒体",
+    "mfa": "部委发布",
     "sina": "转载来源",
 }
 SOURCE_TRUST_NOTES = {
@@ -29,7 +31,27 @@ SOURCE_TRUST_NOTES = {
     "people_cn": "人民网时政频道原文或 RSS，同步后保留原文链接。",
     "xinhuanet": "新华网政治频道原文或 RSS，同步后保留原文链接。",
     "chinanews": "中国新闻网中国频道原文或 RSS，同步后保留原文链接。",
+    "mfa": "外交部官网公开发布内容，适合补足外交与外事动态。",
     "sina": "仅作历史兼容展示，新同步流程默认不再纳入。",
+}
+CATEGORY_DEFINITIONS = OrderedDict(
+    [
+        ("yaowen", "要闻"),
+        ("shizheng", "时政"),
+        ("quanwei", "权威发布"),
+        ("waijiao", "外交"),
+        ("renshi", "人事"),
+        ("guoji", "国际"),
+        ("gangaotai", "港澳台"),
+        ("junshi", "军事"),
+    ]
+)
+CATEGORY_LABEL_TO_SLUG = {label: slug for slug, label in CATEGORY_DEFINITIONS.items()}
+CATEGORY_ALIASES = {
+    "国务院要闻": "要闻",
+    "中国": "时政",
+    "国内": "时政",
+    "头条新闻": "外交",
 }
 
 
@@ -55,6 +77,7 @@ def query_news(
     search: Optional[str] = None,
     months: Optional[int] = 24,
     source: Optional[str] = None,
+    category: Optional[str] = None,
 ) -> Tuple[List[News], List[int]]:
     db = SessionLocal()
     try:
@@ -72,6 +95,9 @@ def query_news(
 
         if source:
             query = query.filter(News.source == source)
+
+        if category:
+            query = query.filter(News.category == normalize_category(category))
 
         news_items = query.order_by(News.published_at.desc()).all()
         years = [value[0] for value in db.query(News.year).distinct().order_by(News.year.desc()).all()]
@@ -106,6 +132,26 @@ def source_trust_note(source: Optional[str]) -> str:
     return SOURCE_TRUST_NOTES.get(source, "请以原文链接为准。")
 
 
+def normalize_category(category: Optional[str]) -> str:
+    value = (category or "").strip()
+    if not value:
+        return "时政"
+    return CATEGORY_ALIASES.get(value, value)
+
+
+def category_label(category: Optional[str]) -> str:
+    return normalize_category(category)
+
+
+def category_slug(category: Optional[str]) -> str:
+    normalized = normalize_category(category)
+    return CATEGORY_LABEL_TO_SLUG.get(normalized, "shizheng")
+
+
+def category_from_slug(slug: str) -> str:
+    return CATEGORY_DEFINITIONS.get(slug, "时政")
+
+
 def get_year_counts(min_year: Optional[int] = None) -> Dict[int, int]:
     db = SessionLocal()
     try:
@@ -125,12 +171,26 @@ def count_news_records() -> int:
         db.close()
 
 
+def get_category_counts(
+    *,
+    year: Optional[int] = None,
+    months: Optional[int] = 24,
+    source: Optional[str] = None,
+) -> Dict[str, int]:
+    items, _ = query_news(year=year, months=months, source=source)
+    counts: Dict[str, int] = {}
+    for item in items:
+        label = category_label(item.category)
+        counts[label] = counts.get(label, 0) + 1
+    return dict(sorted(counts.items(), key=lambda entry: (-entry[1], CATEGORY_LABEL_TO_SLUG.get(entry[0], "zz"))))
+
+
 def news_as_dict(news_items: List[News]) -> List[Dict[str, Any]]:
     return [
         {
             "id": item.id,
             "source": item.source,
-            "category": item.category,
+            "category": category_label(item.category),
             "title": item.title,
             "link": item.link,
             "summary": item.summary,

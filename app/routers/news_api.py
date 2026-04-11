@@ -26,12 +26,15 @@ async def api_news(
     year: Optional[int] = Query(default=None),
     q: Optional[str] = Query(default=None, description="按标题、正文、来源等字段搜索"),
     source: Optional[str] = Query(default=None, description="按来源筛选"),
+    category: Optional[str] = Query(default=None, description="按时政分类筛选"),
     months: int = Query(default=24, ge=1, le=36),
 ):
-    news_items, years = query_news(year=year, search=q, months=months, source=source)
+    news_items, years = query_news(year=year, search=q, months=months, source=source, category=category)
     data = news_as_dict(news_items)
     attach_isoformat_published_at(data)
-    return JSONResponse({"years": years, "query": q or "", "source": source or "", "items": data})
+    return JSONResponse(
+        {"years": years, "query": q or "", "source": source or "", "category": category or "", "items": data}
+    )
 
 
 @router.get("/news/today")
@@ -57,9 +60,10 @@ async def api_news_grouped_by_month(
     year: Optional[int] = Query(default=None),
     q: Optional[str] = Query(default=None, description="按标题、正文、来源等字段搜索"),
     source: Optional[str] = Query(default=None, description="按来源筛选"),
+    category: Optional[str] = Query(default=None, description="按时政分类筛选"),
     months: int = Query(default=24, ge=1, le=36),
 ):
-    news_items, years = query_news(year=year, search=q, months=months, source=source)
+    news_items, years = query_news(year=year, search=q, months=months, source=source, category=category)
     grouped = group_by_month(news_items)
     result: Dict[str, List[Dict[str, Any]]] = {}
     for month_label, items in grouped.items():
@@ -67,7 +71,13 @@ async def api_news_grouped_by_month(
         attach_isoformat_published_at(data)
         result[month_label] = data
     return JSONResponse(
-        {"years": years, "query": q or "", "source": source or "", "grouped_by_month": result}
+        {
+            "years": years,
+            "query": q or "",
+            "source": source or "",
+            "category": category or "",
+            "grouped_by_month": result,
+        }
     )
 
 

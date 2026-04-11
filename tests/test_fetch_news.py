@@ -8,6 +8,7 @@ import pytest
 from app.fetch_news import (
     _extract_date,
     _is_allowed_source_link,
+    _classify_category,
     _normalize_text,
     _target_range,
     fetch_news,
@@ -40,8 +41,15 @@ def test_extract_date_invalid_or_empty():
 def test_allowed_source_link_uses_whitelist():
     assert _is_allowed_source_link("gov_cn", "https://www.gov.cn/yaowen/test.htm")
     assert _is_allowed_source_link("xinhuanet", "https://www.news.cn/politics/test.htm")
+    assert _is_allowed_source_link("mfa", "https://www.mfa.gov.cn/web/ttxw/test.shtml")
     assert not _is_allowed_source_link("gov_cn", "https://fake.example.com/test.htm")
     assert not _is_allowed_source_link("sina", "https://news.sina.com.cn/test.htm")
+
+
+def test_classify_category_prefers_editorial_buckets():
+    assert _classify_category("mfa", "时政", "外交部发布重要消息") == "外交"
+    assert _classify_category("gov_cn", "要闻", "受权发布丨政府工作报告全文") == "权威发布"
+    assert _classify_category("people_cn", "时政", "国务院任免国家工作人员") == "人事"
 
 
 def test_target_range_year():

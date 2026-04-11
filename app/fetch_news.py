@@ -38,11 +38,32 @@ CURATED_RSS_SOURCES = [
         "max_entries": 20,
     },
     {
+        "source": "people_cn",
+        "category": "国际",
+        "feed_url": "http://www.people.com.cn/rss/world.xml",
+        "base_url": "https://world.people.com.cn/",
+        "max_entries": 20,
+    },
+    {
+        "source": "people_cn",
+        "category": "港澳台",
+        "feed_url": "http://www.people.com.cn/rss/haixia.xml",
+        "base_url": "https://tw.people.com.cn/",
+        "max_entries": 20,
+    },
+    {
+        "source": "people_cn",
+        "category": "军事",
+        "feed_url": "http://www.people.com.cn/rss/military.xml",
+        "base_url": "https://military.people.com.cn/",
+        "max_entries": 20,
+    },
+    {
         "source": "xinhuanet",
         "category": "时政",
         "feed_url": "http://www.xinhuanet.com/politics/news_politics.xml",
-        "base_url": "https://www.xinhuanet.com/",
-        "max_entries": 20,
+        "base_url": "https://www.news.cn/",
+        "max_entries": 24,
     },
     {
         "source": "chinanews",
@@ -50,6 +71,36 @@ CURATED_RSS_SOURCES = [
         "feed_url": "https://www.chinanews.com.cn/rss/china.xml",
         "base_url": "https://www.chinanews.com.cn/",
         "max_entries": 20,
+    },
+    {
+        "source": "chinanews",
+        "category": "国际",
+        "feed_url": "https://www.chinanews.com.cn/rss/world.xml",
+        "base_url": "https://www.chinanews.com.cn/",
+        "max_entries": 20,
+    },
+]
+CURATED_HTML_SOURCES = [
+    {
+        "source": "xinhuanet",
+        "category": "时政",
+        "list_urls": ["https://www.news.cn/politics/"],
+        "base_url": "https://www.news.cn/",
+        "link_keywords": ("/politics/",),
+        "max_entries": 36,
+    },
+    {
+        "source": "mfa",
+        "category": "外交",
+        "list_urls": [
+            "https://www.mfa.gov.cn/web/ttxw/index.shtml",
+            "https://www.mfa.gov.cn/web/ttxw/index_1.shtml",
+            "https://www.mfa.gov.cn/web/ttxw/index_2.shtml",
+            "https://www.mfa.gov.cn/web/ttxw/index_3.shtml",
+        ],
+        "base_url": "https://www.mfa.gov.cn/",
+        "link_keywords": ("/web/ttxw/",),
+        "max_entries": 40,
     },
 ]
 TRUSTED_SOURCE_RULES = {
@@ -67,6 +118,10 @@ TRUSTED_SOURCE_RULES = {
     },
     "chinanews": {
         "domains": ("chinanews.com.cn",),
+        "min_content_length": 18,
+    },
+    "mfa": {
+        "domains": ("mfa.gov.cn",),
         "min_content_length": 18,
     },
 }
@@ -196,6 +251,86 @@ def _extract_date(text):
     return None
 
 
+def _classify_category(source, default_category, title):
+    normalized_title = _normalize_text(title)
+    if source == "mfa":
+        return "外交"
+    if any(keyword in normalized_title for keyword in ["任免", "任命", "免去", "辞去", "履新"]):
+        return "人事"
+    if any(
+        keyword in normalized_title
+        for keyword in ["受权发布", "全文", "公报", "白皮书", "决定", "方案", "规定", "意见", "联合声明"]
+    ):
+        return "权威发布"
+    if default_category in {"中国", "国内"}:
+        return "时政"
+    return default_category or DEFAULT_CATEGORY
+
+
+def _parse_generic_list_page(html_text, page_url, source_config):
+    soup = BeautifulSoup(html_text, "html.parser")
+    results = []
+    seen_links = set()
+    link_keywords = source_config.get("link_keywords", ())
+    max_entries = source_config.get("max_entries", 30)
+
+    def find_date_for_anchor(anchor):
+        candidates = []
+        next_text = []
+        for sibling in list(anchor.next_siblings)[:6]:
+            if hasattr(sibling, "get_text"):
+                text = _normalize_text(sibling.get_text(" ", strip=True))
+            else:
+                text = _normalize_text(str(sibling))
+            if text:
+                next_text.append(text)
+        if next_text:
+            candidates.append(" ".join(next_text))
+
+        parent = anchor.parent
+        hops = 0
+        while parent is not None and hops < 5:
+            candidates.append(_normalize_text(parent.get_text(" ", strip=True)))
+            parent = parent.parent
+            hops += 1
+
+        for text in candidates:
+            published_at = _extract_date(text)
+            if published_at:
+                return published_at
+        return None
+
+    for anchor in soup.find_all("a", href=True):
+        href = urljoin(page_url, anchor["href"])
+        title = _normalize_text(anchor.get_text(" ", strip=True))
+        if len(title) < 8 or href in seen_links:
+            continue
+        if not _is_allowed_source_link(source_config["source"], href):
+            continue
+        if link_keywords and not any(keyword in urlparse(href).path for keyword in link_keywords):
+            continue
+        if href.endswith((".jpg", ".png", ".mp4", ".pdf")):
+            continue
+
+        seen_links.add(href)
+        results.append(
+            {
+                "source": source_config["source"],
+                "category": _classify_category(source_config["source"], source_config.get("category", DEFAULT_CATEGORY), title),
+                "title": title,
+                "link": href,
+                "published": "",
+                "published_at": find_date_for_anchor(anchor),
+                "summary": "",
+                "content": "",
+            }
+        )
+        if len(results) >= max_entries:
+            break
+
+    return results
+
+
 def _parse_list_page(html_text, page_url):
     soup = BeautifulSoup(html_text, "html.parser")
     results = []
@@ -245,7 +380,7 @@ def _parse_list_page(html_text, page_url):
         results.append(
             {
                 "source": DEFAULT_SOURCE,
-                "category": DEFAULT_CATEGORY,
+                "category": _classify_category(DEFAULT_SOURCE, "要闻", title),
                 "title": title,
                 "link": href,
                 "published": published_at.strftime("%Y-%m-%d") if published_at else "",
@@ -285,7 +420,7 @@ def _load_json_feed():
         items.append(
             {
                 "source": DEFAULT_SOURCE,
-                "category": DEFAULT_CATEGORY,
+                "category": _classify_category(DEFAULT_SOURCE, "要闻", title),
                 "title": title,
                 "link": urljoin(LIST_BASE_URL, href),
                 "published": published_at.strftime("%Y-%m-%d") if published_at else _normalize_text(str(published_text)),
@@ -329,7 +464,11 @@ def _parse_feed_entries(source_config, raw_xml):
         items.append(
             {
                 "source": source_config["source"],
-                "category": source_config.get("category", DEFAULT_CATEGORY),
+                "category": _classify_category(
+                    source_config["source"],
+                    source_config.get("category", DEFAULT_CATEGORY),
+                    title,
+                ),
                 "title": title,
                 "link": full_link,
                 "published": published_at.strftime("%Y-%m-%d") if published_at else _normalize_text(published_text),
@@ -361,6 +500,38 @@ def _load_external_source_feeds(progress_callback=None):
                 )
         except (HTTPError, URLError, TimeoutError, OSError, ValueError) as exc:
             logger.warning("Failed to load feed %s: %s", source_config["feed_url"], exc)
+    return items
+
+
+def _load_external_html_sources(progress_callback=None):
+    items = []
+    for source_config in CURATED_HTML_SOURCES:
+        source_items = []
+        for list_url in source_config.get("list_urls", []):
+            try:
+                html_text = _fetch_url(list_url)
+                parsed_items = _parse_generic_list_page(html_text, list_url, source_config)
+                source_items.extend(parsed_items)
+            except (HTTPError, URLError, TimeoutError, OSError, ValueError) as exc:
+                logger.warning("Failed to load source page %s: %s", list_url, exc)
+
+        deduped = []
+        seen_links = set()
+        for item in source_items:
+            if item["link"] in seen_links:
+                continue
+            seen_links.add(item["link"])
+            deduped.append(item)
+
+        items.extend(deduped)
+        if progress_callback:
+            progress_callback(
+                {
+                    "stage": "source_page",
+                    "source": source_config["source"],
+                    "matched": len(deduped),
+                }
+            )
     return items
 
 
@@ -440,6 +611,7 @@ def fetch_news(year=None, months=12, max_pages=None, max_items=None, start_date=
         page_items = []
 
     page_items.extend(_load_external_source_feeds(progress_callback=progress_callback))
+    page_items.extend(_load_external_html_sources(progress_callback=progress_callback))
 
     collected = []
     oldest_seen = None
@@ -497,13 +669,19 @@ def fetch_news(year=None, months=12, max_pages=None, max_items=None, start_date=
         )
 
     if (oldest_seen is None or oldest_seen > start_date) and len(news_items) < max_items:
+        consecutive_missing_archives = 0
         for page_number in range(1, max_pages + 1):
             archive_url = _build_archive_url(page_number)
             try:
                 archive_html = _fetch_url(archive_url)
             except (HTTPError, URLError, TimeoutError, OSError) as exc:
                 logger.warning("Failed to fetch archive page %s: %s", archive_url, exc)
+                if isinstance(exc, HTTPError) and exc.code == 404:
+                    consecutive_missing_archives += 1
+                    if consecutive_missing_archives >= 3:
+                        break
                 continue
+            consecutive_missing_archives = 0
 
             archive_items = _parse_list_page(archive_html, archive_url)
             if not archive_items:

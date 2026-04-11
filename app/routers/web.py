@@ -15,6 +15,9 @@ from fastapi.responses import HTMLResponse
 
 from app.config import get_settings
 from app.news_data import (
+    CATEGORY_DEFINITIONS,
+    category_from_slug,
+    category_label,
     count_news_records,
     get_news_by_id,
     get_year_counts,
@@ -35,7 +38,7 @@ LOCAL_TZ = ZoneInfo("Asia/Shanghai")
 MIN_FILTER_YEAR = 2025
 ITEMS_PER_PAGE = 8
 MONTHS_PER_PAGE = 3
-TRUSTED_SOURCE_ORDER = ("gov_cn", "people_cn", "xinhuanet", "chinanews")
+TRUSTED_SOURCE_ORDER = ("gov_cn", "people_cn", "xinhuanet", "mfa", "chinanews")
 
 
 def _filter_items_by_source(items: Sequence, selected_source: Optional[str]) -> List:
@@ -50,6 +53,21 @@ def _source_counts(items: Sequence) -> Dict[str, int]:
         source = item.source or "unknown"
         counts[source] = counts.get(source, 0) + 1
     return dict(sorted(counts.items(), key=lambda entry: (-entry[1], source_label(entry[0]))))
+
+
+def _category_counts(items: Sequence) -> Dict[str, int]:
+    counts: Dict[str, int] = {}
+    for item in items:
+        label = category_label(getattr(item, "category", None))
+        counts[label] = counts.get(label, 0) + 1
+    return dict(sorted(counts.items(), key=lambda entry: (-entry[1], entry[0])))
+
+
+def _filter_items_by_category(items: Sequence, selected_category: Optional[str]) -> List:
+    if not selected_category:
+        return list(items)
+    normalized = category_label(selected_category)
+    return [item for item in items if category_label(getattr(item, "category", None)) == normalized]
 
 
 def _highlight_text(text: str, keyword: Optional[str]) -> str:
@@ -218,6 +236,38 @@ def _render_source_select(source_counts: Dict[str, int], selected_source: Option
     return "".join(options)
 
 
+def _render_category_overview(category_counts: Dict[str, int]) -> str:
+    if not category_counts:
+        return "<div class='empty-state'>当前还没有形成可用的分类数据。</div>"
+
+    cards = []
+    for slug, label in CATEGORY_DEFINITIONS.items():
+        count = category_counts.get(label, 0)
+        cards.append(
+            "<a class='category-card' href='{}'>"
+            "<strong>{}</strong>"
+            "<span>{} 条</span>"
+            "</a>".format(_build_href(f"/category/{slug}"), escape(label), count)
+        )
+    return "<div class='category-grid'>" + "".join(cards) + "</div>"
+
+
+def _render_source_overview(source_counts: Dict[str, int]) -> str:
+    if not source_counts:
+        return "<div class='empty-state'>当前还没有可展示的数据源概况。</div>"
+
+    cards = []
+    for source in TRUSTED_SOURCE_ORDER:
+        count = source_counts.get(source, 0)
+        cards.append(
+            "<a class='category-card source-card' href='{}'>"
+            "<strong>{}</strong>"
+            "<span>{} 条</span>"
+            "</a>".format(_build_href("/search", source=source), escape(source_label(source)), count)
+        )
+    return "<div class='category-grid'>" + "".join(cards) + "</div>"
+
+
 def _render_year_grid(year_counts: Dict[int, int], current_year: int) -> str:
     years = _visible_years(year_counts, current_year)
     if not years:
@@ -332,7 +382,7 @@ def _render_quality_panel() -> str:
         "<section class='panel'>"
         "<div class='panel-head'><div><h2>数据说明</h2><div class='panel-subtitle'>把可信度说清楚，比堆更多按钮更重要。</div></div></div>"
         "<div class='helper-list'>"
-        "<div class='notice compact'><strong>白名单来源：</strong>当前只纳入中国政府网、人民网、新华网、中国新闻网。</div>"
+        "<div class='notice compact'><strong>白名单来源：</strong>当前纳入中国政府网、人民网、新华网、外交部、中国新闻网等公开权威来源。</div>"
         "<div class='notice compact'><strong>同步规则：</strong>链接域名必须匹配来源白名单，日期异常或正文过短的内容会被过滤。</div>"
         "<div class='notice compact'><strong>展示方式：</strong>站内只做原文摘录，不做 AI 改写，并始终保留原文链接。</div>"
         f"<div class='source-reference'>{chips}</div>"
@@ -403,6 +453,8 @@ def _render_nav(active_tab: str) -> str:
     tabs = [
         ("today", "/", "今日时政"),
         ("yesterday", "/yesterday", "昨日时政"),
+        ("categories", "/categories", "分类专题"),
+        ("sources", "/sources", "数据源"),
         ("archive", "/archive", "按月归档"),
         ("status", "/status", "同步状态"),
     ]
@@ -785,6 +837,11 @@ def _render_layout(
           grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
           gap: 12px;
         }}
+        .category-grid {{
+          display: grid;
+          grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+          gap: 12px;
+        }}
         .year-card {{
           padding: 16px;
           border-radius: 18px;
@@ -798,6 +855,23 @@ def _render_layout(
           margin-bottom: 6px;
         }}
         .year-card span {{
+          color: var(--muted);
+          font-size: 14px;
+        }}
+        .category-card {{
+          display: block;
+          padding: 16px;
+          border-radius: 18px;
+          border: 1px solid var(--line);
+          background: rgba(255,255,255,0.74);
+        }}
+        .category-card strong {{
+          display: block;
+          font-size: 19px;
+          color: var(--accent-2);
+          margin-bottom: 6px;
+        }}
+        .category-card span {{
           color: var(--muted);
           font-size: 14px;
         }}
@@ -1089,10 +1163,15 @@ def _shared_sidebar(
     active_source: Optional[str] = None,
     **source_params,
 ) -> str:
+    category_counts = _category_counts(recent_items)
     return (
         "<section class='panel'>"
         "<div class='panel-head'><div><h2>来源筛选</h2><div class='panel-subtitle'>这里保留一个最必要的辅助筛选，其余重复入口全部收掉。</div></div></div>"
         + _render_source_grid(source_counts, active_source, source_path, **source_params)
+        + "</section>"
+        + "<section class='panel'>"
+        "<div class='panel-head'><div><h2>专题入口</h2><div class='panel-subtitle'>把时政按主题拆开后，网站才更像一个产品。</div></div></div>"
+        + _render_category_overview(category_counts)
         + "</section>"
     )
 
@@ -1160,6 +1239,7 @@ async def today_page(
     current_year = datetime.now(LOCAL_TZ).year
     all_recent_items, _ = query_news(year=None, search=None, months=24)
     source_counts = _source_counts(all_recent_items)
+    category_counts = _category_counts(all_recent_items)
     filtered_recent_items = _filter_items_by_source(all_recent_items, source)
     items, title = today_news(filtered_recent_items, limit=None)
     page_items, current_page, total_pages = _paginate_sequence(items, page, ITEMS_PER_PAGE)
@@ -1170,6 +1250,14 @@ async def today_page(
         f"<div class='panel-head'><div><h2>{escape(title)}</h2><div class='panel-subtitle'>只显示数据库里日期为今天的内容。</div></div><span>{len(items)} 条</span></div>"
         + _render_scroll_shell(_render_news_stream(page_items, "今天还没有抓取到时政内容。"))
         + _render_pager("/today", current_page, total_pages, source=source)
+        + "</section>"
+        + "<section class='panel'>"
+        "<div class='panel-head'><div><h2>分类专题</h2><div class='panel-subtitle'>按专题聚合后，网站才真正有了入口结构，而不是一长串列表。</div></div></div>"
+        + _render_category_overview(category_counts)
+        + "</section>"
+        + "<section class='panel'>"
+        "<div class='panel-head'><div><h2>权威来源</h2><div class='panel-subtitle'>把权威来源单独做成入口，方便直接按站点回看和校验。</div></div></div>"
+        + _render_source_overview(source_counts)
         + "</section>"
     )
 
@@ -1247,6 +1335,143 @@ async def yesterday_page(
         selected_year=current_year,
         selected_source=source,
         page_title="昨日时政",
+    )
+
+
+@router.get("/categories", response_class=HTMLResponse)
+async def categories_page():
+    current_year = datetime.now(LOCAL_TZ).year
+    recent_items, _ = query_news(year=None, search=None, months=24)
+    source_counts = _source_counts(recent_items)
+    category_counts = _category_counts(recent_items)
+    year_counts = get_year_counts(min_year=MIN_FILTER_YEAR)
+
+    main_html = (
+        "<section class='panel'>"
+        "<div class='panel-head'><div><h2>分类专题</h2><div class='panel-subtitle'>把聚合站做成产品，核心不是多几个按钮，而是让用户能按主题直接进入。</div></div></div>"
+        + _render_category_overview(category_counts)
+        + "</section>"
+        + "<section class='panel'>"
+        "<div class='panel-head'><div><h2>近期重点专题</h2><div class='panel-subtitle'>这里按分类聚合最近两年的收录结果，优先把权威发布、外交、人事这些高频专题做出来。</div></div></div>"
+        + _render_scroll_shell(_render_news_stream(recent_items[:8], "当前没有可展示的专题内容。"))
+        + "</section>"
+    )
+
+    return _render_layout(
+        active_tab="categories",
+        hero_title="分类专题",
+        hero_text="所有时政不该混成一条流水线。分类专题页负责把要闻、权威发布、外交、人事、国际等主题拆开。",
+        stats=[
+            ("专题数量", str(len(category_counts))),
+            ("数据库总条数", str(count_news_records())),
+            ("当前年份", str(current_year)),
+            ("来源数量", str(len([count for count in source_counts.values() if count > 0]))),
+        ],
+        main_html=main_html,
+        side_html=_shared_sidebar(
+            year_counts,
+            current_year,
+            recent_items,
+            source_counts,
+            "/categories",
+        ),
+        year_counts=year_counts,
+        source_counts=source_counts,
+        current_year=current_year,
+        selected_year=current_year,
+        page_title="分类专题",
+    )
+
+
+@router.get("/category/{slug}", response_class=HTMLResponse)
+async def category_detail_page(
+    slug: str,
+    page: int = Query(default=1, ge=1),
+    source: Optional[str] = Query(default=None),
+):
+    current_year = datetime.now(LOCAL_TZ).year
+    category_name = category_from_slug(slug)
+    all_items, _ = query_news(year=None, search=None, months=24, source=source, category=category_name)
+    source_counts = _source_counts(all_items)
+    page_items, current_page, total_pages = _paginate_sequence(all_items, page, ITEMS_PER_PAGE)
+    recent_items, _ = query_news(year=None, search=None, months=24)
+    year_counts = get_year_counts(min_year=MIN_FILTER_YEAR)
+
+    main_html = (
+        "<section class='panel'>"
+        f"<div class='panel-head'><div><h2>{escape(category_name)}</h2><div class='panel-subtitle'>按专题聚合，方便直接查看同类时政，不再把所有站点内容混在一起。</div></div><span>{len(all_items)} 条</span></div>"
+        + _render_scroll_shell(_render_news_stream(page_items, f"当前还没有 {category_name} 相关内容。"))
+        + _render_pager(f"/category/{slug}", current_page, total_pages, source=source)
+        + "</section>"
+    )
+
+    return _render_layout(
+        active_tab="categories",
+        hero_title=f"{category_name}专题",
+        hero_text="分类详情页负责把多站点时政按主题聚起来，用户不需要自己靠关键词猜。",
+        stats=[
+            ("专题", category_name),
+            ("专题条数", str(len(all_items))),
+            ("当前来源", source_label(source) if source else "全部来源"),
+            ("数据库总条数", str(count_news_records())),
+        ],
+        main_html=main_html,
+        side_html=_shared_sidebar(
+            year_counts,
+            current_year,
+            recent_items,
+            source_counts if source_counts else _source_counts(recent_items),
+            f"/category/{slug}",
+            active_source=source,
+        ),
+        year_counts=year_counts,
+        source_counts=source_counts if source_counts else _source_counts(recent_items),
+        current_year=current_year,
+        selected_year=current_year,
+        selected_source=source,
+        page_title=f"{category_name}专题",
+    )
+
+
+@router.get("/sources", response_class=HTMLResponse)
+async def sources_page():
+    current_year = datetime.now(LOCAL_TZ).year
+    recent_items, _ = query_news(year=None, search=None, months=24)
+    source_counts = _source_counts(recent_items)
+    year_counts = get_year_counts(min_year=MIN_FILTER_YEAR)
+
+    main_html = (
+        "<section class='panel'>"
+        "<div class='panel-head'><div><h2>数据源</h2><div class='panel-subtitle'>把来源单开一页，用户才能清楚我们到底聚合了哪些权威站点。</div></div></div>"
+        + _render_source_overview(source_counts)
+        + "</section>"
+        + _render_source_health_panel(recent_items)
+        + _render_quality_panel()
+    )
+
+    return _render_layout(
+        active_tab="sources",
+        hero_title="数据源",
+        hero_text="这个页面专门解释网站聚合了哪些权威来源、各来源的新鲜度，以及为什么这些来源值得信任。",
+        stats=[
+            ("来源数量", str(len([count for count in source_counts.values() if count > 0]))),
+            ("数据库总条数", str(count_news_records())),
+            ("当前年份", str(current_year)),
+            ("当前收录", str(len(recent_items))),
+        ],
+        main_html=main_html,
+        side_html=_shared_sidebar(
+            year_counts,
+            current_year,
+            recent_items,
+            source_counts,
+            "/sources",
+        ),
+        year_counts=year_counts,
+        source_counts=source_counts,
+        current_year=current_year,
+        selected_year=current_year,
+        page_title="数据源",
     )
 
 
