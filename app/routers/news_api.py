@@ -1,4 +1,4 @@
-"""JSON API：新闻与 AI 输出。"""
+"""JSON API：新闻查询。"""
 
 from datetime import datetime
 from typing import Any, Dict, List, Optional
@@ -6,7 +6,8 @@ from typing import Any, Dict, List, Optional
 from fastapi import APIRouter, Query
 from fastapi.responses import JSONResponse
 
-from app.ai_summary import generate_questions, generate_summary
+from zoneinfo import ZoneInfo
+
 from app.news_data import (
     attach_isoformat_published_at,
     group_by_month,
@@ -16,20 +17,25 @@ from app.news_data import (
     yesterday_news,
 )
 
-router = APIRouter(prefix="/api", tags=["新闻与 AI API"])
+router = APIRouter(prefix="/api", tags=["新闻 API"])
+LOCAL_TZ = ZoneInfo("Asia/Shanghai")
 
 
 @router.get("/news")
-async def api_news(year: Optional[int] = Query(default=None)):
-    news_items, years = query_news(year=year)
+async def api_news(
+    year: Optional[int] = Query(default=None),
+    q: Optional[str] = Query(default=None, description="按标题、正文、来源等字段搜索"),
+    months: int = Query(default=24, ge=1, le=36),
+):
+    news_items, years = query_news(year=year, search=q, months=months)
     data = news_as_dict(news_items)
     attach_isoformat_published_at(data)
-    return JSONResponse({"years": years, "items": data})
+    return JSONResponse({"years": years, "query": q or "", "items": data})
 
 
 @router.get("/news/today")
 async def api_news_today():
-    news_items, _ = query_news(year=None)
+    news_items, _ = query_news(year=None, months=24)
     today_items, today_title = today_news(news_items)
     data = news_as_dict(today_items)
     attach_isoformat_published_at(data)
@@ -38,7 +44,7 @@ async def api_news_today():
 
 @router.get("/news/yesterday")
 async def api_news_yesterday():
-    news_items, _ = query_news(year=None)
+    news_items, _ = query_news(year=None, months=24)
     yesterday_items, yesterday_title = yesterday_news(news_items)
     data = news_as_dict(yesterday_items)
     attach_isoformat_published_at(data)
@@ -46,20 +52,24 @@ async def api_news_yesterday():
 
 
 @router.get("/news/grouped-by-month")
-async def api_news_grouped_by_month(year: Optional[int] = Query(default=None)):
-    news_items, years = query_news(year=year)
+async def api_news_grouped_by_month(
+    year: Optional[int] = Query(default=None),
+    q: Optional[str] = Query(default=None, description="按标题、正文、来源等字段搜索"),
+    months: int = Query(default=24, ge=1, le=36),
+):
+    news_items, years = query_news(year=year, search=q, months=months)
     grouped = group_by_month(news_items)
     result: Dict[str, List[Dict[str, Any]]] = {}
     for month_label, items in grouped.items():
         data = news_as_dict(items)
         attach_isoformat_published_at(data)
         result[month_label] = data
-    return JSONResponse({"years": years, "grouped_by_month": result})
+    return JSONResponse({"years": years, "query": q or "", "grouped_by_month": result})
 
 
 @router.get("/news/past-two-years")
 async def api_news_past_two_years():
-    current_year = datetime.utcnow().year
+    current_year = datetime.now(LOCAL_TZ).year
     all_items = []
     for year in [current_year, current_year - 1]:
         news_items, _ = query_news(year=year)
@@ -83,35 +93,5 @@ async def api_news_past_two_years():
             "total_items": len(data),
             "items": data,
             "grouped_by_month": grouped_result,
-        }
-    )
-
-
-@router.get("/ai/summary")
-async def api_ai_summary(year: Optional[int] = Query(default=None)):
-    """与首页「AI 总结」一致：基于当前筛选范围内的新闻文本生成要点。"""
-    news_items, years = query_news(year=year)
-    news_dicts = news_as_dict(news_items)
-    lines = generate_summary(news_dicts)
-    return JSONResponse(
-        {
-            "years": years,
-            "year_filter": year,
-            "summary": lines,
-        }
-    )
-
-
-@router.get("/ai/questions")
-async def api_ai_questions(year: Optional[int] = Query(default=None)):
-    """与首页「公考风格练习题」一致：基于当前筛选范围内的新闻生成题目。"""
-    news_items, years = query_news(year=year)
-    news_dicts = news_as_dict(news_items)
-    questions = generate_questions(news_dicts)
-    return JSONResponse(
-        {
-            "years": years,
-            "year_filter": year,
-            "questions": questions,
         }
     )

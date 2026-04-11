@@ -105,7 +105,7 @@ deploy_app() {
     if [ ! -f ".env" ]; then
         log_warn "未找到 .env 文件，从示例文件创建..."
         cp .env.example .env
-        log_warn "请编辑 .env 文件，设置必要的环境变量（特别是 OPENAI_API_KEY）"
+        log_warn "请编辑 .env 文件，设置必要的环境变量"
         nano .env || vim .env || vi .env
     fi
 
@@ -157,7 +157,7 @@ deploy_prod() {
         log_warn "未找到 .env.production 文件，从示例文件创建..."
         cp .env.example .env.production
         log_warn "请编辑 .env.production 文件，设置生产环境变量"
-        log_warn "特别注意：POSTGRES_PASSWORD, OPENAI_API_KEY 等敏感配置"
+        log_warn "特别注意：POSTGRES_PASSWORD 等敏感配置"
         nano .env.production || vim .env.production || vi .env.production
     fi
 

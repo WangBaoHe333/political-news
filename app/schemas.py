@@ -48,22 +48,6 @@ class NewsResponse(BaseModel):
     grouped_by_month: Optional[Dict[str, List[News]]] = None
 
 
-class Question(BaseModel):
-    type: str
-    stem: str
-    options: List[str] = []
-    answer: str
-    analysis: str
-
-
-class QuestionsResponse(BaseModel):
-    questions: List[Question]
-
-
-class SummaryResponse(BaseModel):
-    summary: List[str]
-
-
 class SyncStatus(BaseModel):
     in_progress: bool
     scope: str

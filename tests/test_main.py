@@ -9,6 +9,15 @@ def test_home_page(client):
     response = client.get("/")
     assert response.status_code == 200
     assert "时政资料库" in response.text
+    assert "同步状态" in response.text
+
+
+def test_home_page_with_filters_and_pagination(client):
+    """测试首页带筛选和分页参数"""
+    response = client.get("/?q=%E6%B5%8B%E8%AF%95&year=2025&page=1")
+    assert response.status_code == 200
+    assert "按月归档" in response.text
+    assert "归档页码" in response.text
 
 
 def test_api_news_endpoint(client):
@@ -30,6 +39,16 @@ def test_api_news_with_year_param(client):
     data = response.json()
     assert "years" in data
     assert "items" in data
+    assert "query" in data
+
+
+def test_api_news_search_param(client):
+    """测试新闻搜索参数"""
+    response = client.get("/api/news?q=%E6%B5%8B%E8%AF%95")
+    assert response.status_code == 200
+    data = response.json()
+    assert "query" in data
+    assert isinstance(data["items"], list)
 
 
 def test_api_today_news(client):
@@ -73,26 +92,6 @@ def test_api_past_two_years(client):
     assert "grouped_by_month" in data
 
 
-def test_api_ai_summary(client):
-    """测试 AI 总结 JSON API"""
-    response = client.get("/api/ai/summary")
-    assert response.status_code == 200
-    data = response.json()
-    assert "summary" in data
-    assert isinstance(data["summary"], list)
-    assert "years" in data
-
-
-def test_api_ai_questions(client):
-    """测试 AI 题目 JSON API"""
-    response = client.get("/api/ai/questions")
-    assert response.status_code == 200
-    data = response.json()
-    assert "questions" in data
-    assert isinstance(data["questions"], list)
-    assert "years" in data
-
-
 def test_health_endpoint(client):
     """健康检查"""
     response = client.get("/health")
@@ -110,6 +109,7 @@ def test_sync_status_endpoint(client):
     assert "in_progress" in data
     assert "scope" in data
     assert "message" in data
+    assert "last_sync_at" in data
     assert isinstance(data["in_progress"], bool)
 
 

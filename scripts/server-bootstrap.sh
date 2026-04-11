@@ -48,7 +48,7 @@ if [[ ! -f .env ]]; then
     cp .env.example .env
   fi
   echo "" >&2
-  echo "请在 $INSTALL_DIR 编辑 .env（至少设置 OPENAI_API_KEY），然后执行：" >&2
+  echo "请在 $INSTALL_DIR 编辑 .env（按需填写数据库与同步配置），然后执行：" >&2
   echo "  cd $INSTALL_DIR && ${DC[*]} up -d --build" >&2
   exit 2
 fi

@@ -3,20 +3,49 @@
 from collections import OrderedDict
 from datetime import datetime, timedelta
 from typing import Any, Dict, List, Optional, Tuple
+from zoneinfo import ZoneInfo
+
+from sqlalchemy import or_
 
 from app.database import SessionLocal
 from app.models import News
 
 
-def query_news(year: Optional[int] = None) -> Tuple[List[News], List[int]]:
+def _build_search_filter(query_text: str):
+    normalized = (query_text or "").strip()
+    if not normalized:
+        return None
+
+    pattern = f"%{normalized}%"
+    return or_(
+        News.title.ilike(pattern),
+        News.summary.ilike(pattern),
+        News.content.ilike(pattern),
+        News.link.ilike(pattern),
+        News.source.ilike(pattern),
+        News.category.ilike(pattern),
+        News.published.ilike(pattern),
+    )
+
+
+def query_news(
+    year: Optional[int] = None,
+    search: Optional[str] = None,
+    months: int = 24,
+) -> Tuple[List[News], List[int]]:
     db = SessionLocal()
     try:
         query = db.query(News)
+
         if year:
             query = query.filter(News.year == year)
         else:
-            start_date = datetime.utcnow() - timedelta(days=365)
+            start_date = datetime.utcnow() - timedelta(days=max(months, 1) * 30)
             query = query.filter(News.published_at >= start_date)
+
+        search_filter = _build_search_filter(search or "")
+        if search_filter is not None:
+            query = query.filter(search_filter)
 
         news_items = query.order_by(News.published_at.desc()).all()
         years = [value[0] for value in db.query(News.year).distinct().order_by(News.year.desc()).all()]
@@ -59,13 +88,13 @@ def latest_news_date(news_items: List[News]) -> Optional[datetime]:
 
 
 def today_news(news_items: List[News]) -> Tuple[List[News], str]:
-    today = datetime.utcnow().date()
+    today = datetime.now(LOCAL_TZ).date()
     today_items = [item for item in news_items if item.published_at.date() == today]
     return today_items[:8], f"今日时政（{today.strftime('%Y-%m-%d')}）"
 
 
 def yesterday_news(news_items: List[News]) -> Tuple[List[News], str]:
-    yesterday = datetime.utcnow().date() - timedelta(days=1)
+    yesterday = datetime.now(LOCAL_TZ).date() - timedelta(days=1)
     yesterday_items = [item for item in news_items if item.published_at.date() == yesterday]
     return yesterday_items[:8], f"昨日时政（{yesterday.strftime('%Y-%m-%d')}）"
 
@@ -76,3 +105,4 @@ def attach_isoformat_published_at(items: List[Dict[str, Any]]) -> List[Dict[str,
         if isinstance(pa, datetime):
             item["published_at"] = pa.isoformat()
     return items
+LOCAL_TZ = ZoneInfo("Asia/Shanghai")

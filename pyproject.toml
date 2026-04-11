@@ -23,11 +23,10 @@ classifiers = [
     "Topic :: Internet :: WWW/HTTP",
     "Topic :: Text Processing :: Linguistic",
 ]
-keywords = ["news", "politics", "education", "civil-service", "ai"]
+keywords = ["news", "politics", "education", "civil-service"]
 dependencies = [
     "fastapi>=0.104.0",
     "uvicorn[standard]>=0.24.0",
-    "openai>=1.0.0",
     "apscheduler>=3.10.0",
     "feedparser>=6.0.0",
     "sqlalchemy>=2.0.0",
@@ -99,7 +98,6 @@ module = [
     "sqlalchemy.*",
     "fastapi.*",
     "apscheduler.*",
-    "openai.*",
 ]
 ignore_missing_imports = true
 

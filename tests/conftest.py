@@ -43,5 +43,4 @@ def client():
 def mock_env_vars(monkeypatch):
     """模拟环境变量"""
     monkeypatch.setenv("DATABASE_URL", "sqlite:///:memory:")
-    monkeypatch.setenv("OPENAI_API_KEY", "test_key")
     monkeypatch.setenv("AUTO_SYNC_ON_STARTUP", "0")

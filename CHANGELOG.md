@@ -9,7 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 - GitHub Actions CI/CD pipeline with automated testing, linting, and deployment
-- Comprehensive test suite for `fetch_news`, `ai_summary`, and database models
+- Comprehensive test suite for `fetch_news` and database models
 - Modern Python project configuration with `pyproject.toml`
 - Pre-commit hooks for code quality checks (black, isort, flake8, mypy, bandit)
 - Code coverage reporting with pytest-cov
@@ -31,9 +31,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 - Initial release of Political News System
 - Automated news fetching from Chinese government websites
-- AI-powered summarization and question generation using OpenAI GPT
 - Monthly archiving and organization of political content
-- Civil service exam style practice questions
 - Responsive web interface with modern design
 - RESTful API endpoints for programmatic access
 - Background synchronization with batch backfill support

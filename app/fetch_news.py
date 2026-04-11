@@ -10,8 +10,10 @@ from html import unescape
 from urllib.error import HTTPError, URLError
 from urllib.parse import urljoin
 from urllib.request import Request, urlopen
+from xml.etree import ElementTree
 
 from bs4 import BeautifulSoup
+import feedparser
 
 from app.database import SessionLocal
 from app.models import News
@@ -27,6 +29,31 @@ HTTP_TIMEOUT = int(os.getenv("HTTP_TIMEOUT_SECONDS", "30"))
 HTTP_RETRIES = int(os.getenv("HTTP_RETRIES", "2"))
 DEFAULT_MAX_PAGES = int(os.getenv("SYNC_MAX_PAGES", "260"))
 DEFAULT_MAX_ITEMS = int(os.getenv("SYNC_MAX_ITEMS", "400"))
+CURATED_RSS_SOURCES = [
+    {
+        "source": "people_cn",
+        "category": "时政",
+        "feed_url": "http://www.people.com.cn/rss/politics.xml",
+        "base_url": "https://politics.people.com.cn/",
+        "max_entries": 20,
+    },
+    {
+        "source": "xinhuanet",
+        "category": "时政",
+        "feed_url": "http://www.xinhuanet.com/politics/news_politics.xml",
+        "base_url": "https://www.xinhuanet.com/",
+        "max_entries": 20,
+    },
+    {
+        "source": "chinanews",
+        "category": "时政",
+        "feed_url": "https://www.chinanews.com.cn/rss/china.xml",
+        "base_url": "https://www.chinanews.com.cn/",
+        "max_entries": 20,
+    },
+]
+SINA_NEWS_OPML_URL = os.getenv("SINA_NEWS_OPML_URL", "https://rss.sina.com.cn/sina_news_opml.xml")
+SINA_FEED_KEYWORDS = ("时政", "国内", "焦点", "要闻")
 
 
 def _normalize_text(value):
@@ -224,6 +251,102 @@ def _load_json_feed():
     return items
 
 
+def _parse_feed_entries(source_config, raw_xml):
+    parsed = feedparser.parse(raw_xml.encode("utf-8"))
+    items = []
+    for entry in parsed.entries[: source_config.get("max_entries", 20)]:
+        title = _normalize_text(entry.get("title", ""))
+        href = entry.get("link", "")
+        if not title or not href:
+            continue
+
+        published_text = (
+            entry.get("published")
+            or entry.get("updated")
+            or entry.get("created")
+            or entry.get("pubDate")
+            or ""
+        )
+        summary = _normalize_text(
+            entry.get("summary")
+            or entry.get("description")
+            or (
+                entry.get("content", [{}])[0].get("value", "")
+                if isinstance(entry.get("content"), list) and entry.get("content")
+                else ""
+            )
+        )
+        published_at = _extract_date(f"{published_text} {summary}")
+        items.append(
+            {
+                "source": source_config["source"],
+                "category": source_config.get("category", DEFAULT_CATEGORY),
+                "title": title,
+                "link": urljoin(source_config.get("base_url", ""), href),
+                "published": published_at.strftime("%Y-%m-%d") if published_at else _normalize_text(published_text),
+                "published_at": published_at,
+                "summary": summary,
+                "content": summary,
+            }
+        )
+    return items
+
+
+def _load_sina_source_configs():
+    try:
+        raw_opml = _fetch_url(SINA_NEWS_OPML_URL)
+        root = ElementTree.fromstring(raw_opml)
+    except (HTTPError, URLError, TimeoutError, OSError, ElementTree.ParseError) as exc:
+        logger.warning("Failed to load Sina OPML %s: %s", SINA_NEWS_OPML_URL, exc)
+        return []
+
+    configs = []
+    seen = set()
+    for outline in root.findall(".//outline"):
+        feed_url = outline.attrib.get("xmlUrl", "")
+        title = outline.attrib.get("title") or outline.attrib.get("text") or ""
+        if not feed_url or not title:
+            continue
+        if not any(keyword in title for keyword in SINA_FEED_KEYWORDS):
+            continue
+        if feed_url in seen:
+            continue
+        seen.add(feed_url)
+        configs.append(
+            {
+                "source": "sina",
+                "category": title,
+                "feed_url": feed_url,
+                "base_url": "https://news.sina.com.cn/",
+                "max_entries": 12,
+            }
+        )
+    return configs[:3]
+
+
+def _load_external_source_feeds(progress_callback=None):
+    items = []
+    source_configs = CURATED_RSS_SOURCES + _load_sina_source_configs()
+
+    for source_config in source_configs:
+        try:
+            raw_xml = _fetch_url(source_config["feed_url"])
+            feed_items = _parse_feed_entries(source_config, raw_xml)
+            items.extend(feed_items)
+            if progress_callback:
+                progress_callback(
+                    {
+                        "stage": "rss",
+                        "source": source_config["source"],
+                        "matched": len(feed_items),
+                        "feed_url": source_config["feed_url"],
+                    }
+                )
+        except (HTTPError, URLError, TimeoutError, OSError, ValueError) as exc:
+            logger.warning("Failed to load feed %s: %s", source_config["feed_url"], exc)
+    return items
+
+
 def _parse_article_detail(html_text):
     soup = BeautifulSoup(html_text, "html.parser")
     full_text = _normalize_text(soup.get_text(" ", strip=True))
@@ -231,6 +354,11 @@ def _parse_article_detail(html_text):
     blocks = []
     selectors = [
         ".pages_content p",
+        ".rm_txt_con p",
+        ".article-content p",
+        ".content_area p",
+        ".left_zw p",
+        ".news-article p",
         ".article p",
         ".content p",
         ".TRS_Editor p",
@@ -293,6 +421,8 @@ def fetch_news(year=None, months=12, max_pages=None, max_items=None, start_date=
     except (HTTPError, URLError, TimeoutError, OSError, json.JSONDecodeError) as exc:
         logger.warning("Failed to fetch json feed %s: %s", LIST_JSON_URL, exc)
         page_items = []
+
+    page_items.extend(_load_external_source_feeds(progress_callback=progress_callback))
 
     collected = []
     oldest_seen = None

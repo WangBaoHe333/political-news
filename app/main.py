@@ -27,7 +27,7 @@ async def lifespan(app: FastAPI):
         logger.info("Startup auto sync is disabled; serving cached database content only.")
     else:
         try:
-            fetch_and_save_news(months=3, max_items=120)
+            fetch_and_save_news(months=24, max_pages=260, max_items=700)
         except Exception as exc:
             logger.exception("Startup bootstrap failed: %s", exc)
     yield
@@ -37,12 +37,12 @@ async def lifespan(app: FastAPI):
 def create_app() -> FastAPI:
     application = FastAPI(
         title="时政资料库 / Political News",
-        description="中国政府网时政聚合、AI 摘要与考公风格练习题目。",
+        description="中国政府网时政聚合、按月归档、年份筛选与关键词搜索。",
         version="1.0.0",
         lifespan=lifespan,
         openapi_tags=[
             {"name": "页面", "description": "HTML 阅读界面"},
-            {"name": "新闻与 AI API", "description": "JSON 接口（含 AI 总结与题目）"},
+            {"name": "新闻 API", "description": "JSON 接口（支持年份、关键词与时间维度）"},
             {"name": "同步", "description": "数据抓取与后台任务"},
         ],
     )

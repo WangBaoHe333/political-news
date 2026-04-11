@@ -68,6 +68,7 @@ def get_sync_status() -> Dict[str, Any]:
         "message": get_app_state("sync_message", ""),
         "started_at": get_app_state("sync_started_at", ""),
         "finished_at": get_app_state("sync_finished_at", ""),
+        "last_sync_at": get_app_state("last_sync_at", ""),
         "last_result": get_app_state("last_sync_result", ""),
     }
 

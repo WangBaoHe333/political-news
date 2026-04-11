@@ -13,7 +13,6 @@ services:
       - "8000"
     environment:
       - DATABASE_URL=postgresql://political_user:${POSTGRES_PASSWORD}@postgres:5432/political_news
-      - OPENAI_API_KEY=${OPENAI_API_KEY}
       - AUTO_SYNC_ON_STARTUP=0
       - LOG_LEVEL=INFO
       - LOG_FORMAT=json

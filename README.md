@@ -1,18 +1,17 @@
 # 时政系统 (Political News System)
 
-一个帮助考公人和时政爱好者获取最新时政内容的智能平台，提供AI自动总结、考公风格出题、按月份归档等功能。
+一个帮助考公人和时政爱好者获取最新时政内容的平台，提供近两年时政检索、按月份归档、今日/昨日分区展示、年份切换与关键词搜索等功能。
 
 ## ✨ 功能特性
 
 - **时政新闻聚合**：自动从中国政府网(www.gov.cn)抓取时政新闻
-- **AI智能分析**：使用OpenAI GPT-4o-mini生成新闻摘要和考公风格题目
 - **时间维度展示**：
-  - 今日时政（截止目前）
+  - 今日时政（每小时自动刷新）
   - 昨日时政
-  - 近一年/近两年时政
+  - 近两年时政
   - 按年份筛选查看
+- **关键词搜索**：按标题、正文、来源、日期等字段快速检索
 - **按月归档**：自动按月份分组整理时政内容
-- **考公训练**：生成公务员考试风格的练习题（单选、判断、材料概括等）
 - **后台同步**：支持定时自动同步和手动批量回填
 - **RESTful API**：提供完整的API接口供第三方调用
 - **响应式Web界面**：现代化设计，支持移动端访问
@@ -22,7 +21,7 @@
 ### 环境要求
 - Python 3.9+
 - SQLite (默认) / PostgreSQL / MySQL
-- OpenAI API Key (用于AI功能)
+- 无额外 AI 依赖，直接配置数据库即可
 
 ### 安装步骤
 
@@ -47,7 +46,7 @@
 4. **配置环境变量**
    ```bash
    cp .env.example .env
-   # 编辑 .env 文件，设置你的 OpenAI API Key
+   # 编辑 .env 文件，按需填写环境变量
    ```
 
 5. **初始化数据库**
@@ -72,11 +71,6 @@
 # 数据库配置
 DATABASE_URL=sqlite:///./political_news.db
 
-# OpenAI配置
-OPENAI_API_KEY=your_openai_api_key_here
-OPENAI_SUMMARY_MODEL=gpt-4o-mini
-OPENAI_QUESTION_MODEL=gpt-4o-mini
-
 # 应用配置
 AUTO_SYNC_ON_STARTUP=0  # 启动时自动同步（0=禁用，1=启用）
 SYNC_MAX_PAGES=260      # 最大抓取页数
@@ -96,14 +90,14 @@ LIST_JSON_URL=https://www.gov.cn/yaowen/liebiao/YAOWENLIEBIAO.json
 ## 📊 数据同步
 
 ### 手动同步
-1. **近一年数据**：点击"后台同步近一年"按钮
-2. **近两年数据**：点击"后台同步近两年"按钮
-3. **本年数据**：点击"后台同步本年"按钮
-4. **分批回填**：点击"分批回填近两年"（适合大量历史数据）
+1. **同步近两年**：同步最近两年的时政内容
+2. **刷新最新内容**：同步最近一个月的最新时政
+3. **同步本年**：同步当前年份的数据
+4. **分批回填**：适合大量历史数据，分段补齐
 
 ### 自动同步
 - 启动时自动同步：设置 `AUTO_SYNC_ON_STARTUP=1`
-- 定时任务：每6小时自动同步最新数据（通过APScheduler）
+- 定时任务：每1小时自动同步最近一个月的数据（通过APScheduler）
 
 ### 同步状态查看
 - 首页显示最近同步结果
@@ -117,10 +111,6 @@ LIST_JSON_URL=https://www.gov.cn/yaowen/liebiao/YAOWENLIEBIAO.json
 - `GET /api/news/yesterday` - 获取昨日时政
 - `GET /api/news/grouped-by-month` - 按月分组获取新闻
 - `GET /api/news/past-two-years` - 获取过去两年时政内容
-
-### AI 输出 API（与首页同源逻辑）
-- `GET /api/ai/summary` - 获取当前筛选范围内的 AI 要点总结（可选 `year` 查询参数，与 `/api/news` 一致）
-- `GET /api/ai/questions` - 获取公考风格练习题 JSON（可选 `year`）
 
 ### 运维
 - `GET /health` - 健康检查（JSON，含 `status` 与 `timestamp`）
@@ -162,7 +152,6 @@ docker build -t political-news .
 ```bash
 docker run -d \
   -p 8000:8000 \
-  -e OPENAI_API_KEY=your_api_key \
   -v ./data:/app/data \
   --name political-news \
   political-news
@@ -178,7 +167,6 @@ services:
       - "8000:8000"
     environment:
       - DATABASE_URL=sqlite:///./data/political_news.db
-      - OPENAI_API_KEY=${OPENAI_API_KEY}
     volumes:
       - ./data:/app/data
     restart: unless-stopped
@@ -253,7 +241,6 @@ pytest tests/
 
 ### 测试覆盖范围
 - 新闻抓取模块测试
-- AI分析模块测试
 - API端点测试
 - 数据库操作测试
 
@@ -266,17 +253,12 @@ pytest tests/
    python -c "from app.database import init_db; init_db()"
    ```
 
-2. **OpenAI API调用失败**
-   - 检查 `OPENAI_API_KEY` 环境变量
-   - 验证API Key是否有足够余额
-   - 检查网络连接
-
-3. **新闻抓取失败**
+2. **新闻抓取失败**
    - 检查网络连接
    - 验证数据源URL是否可访问
    - 查看日志获取详细错误信息
 
-4. **内存不足**
+3. **内存不足**
    - 减少 `SYNC_MAX_PAGES` 和 `SYNC_MAX_ITEMS` 值
    - 使用分批回填功能
 
@@ -301,7 +283,6 @@ political-news/
 │   ├── database.py        # 数据库配置
 │   ├── schemas.py         # Pydantic模型
 │   ├── fetch_news.py      # 新闻抓取模块
-│   ├── ai_summary.py      # AI分析模块
 │   └── tasks.py           # 定时任务
 ├── tests/                 # 测试文件
 ├── requirements.txt       # Python依赖
@@ -343,7 +324,6 @@ mypy app/
 ## 🙏 致谢
 
 - 数据来源：[中国政府网](https://www.gov.cn)
-- AI能力：[OpenAI GPT](https://openai.com)
 - Web框架：[FastAPI](https://fastapi.tiangolo.com)
 - 前端设计灵感：多种公务员考试资料网站
 

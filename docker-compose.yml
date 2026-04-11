@@ -9,7 +9,6 @@ services:
       - "8000:8000"
     environment:
       - DATABASE_URL=sqlite:///./data/political_news.db
-      - OPENAI_API_KEY=${OPENAI_API_KEY}
       - AUTO_SYNC_ON_STARTUP=0
       - LOG_LEVEL=INFO
     volumes:
