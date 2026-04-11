@@ -108,6 +108,34 @@ def test_today_and_yesterday_pages(client):
     assert "昨日时政" in yesterday_response.text
 
 
+def test_today_page_falls_back_to_recent_items_when_empty(monkeypatch, client):
+    """今日为空时首页应自动回退到最近更新，避免空白页。"""
+    from app.routers import web
+
+    fake_item = SimpleNamespace(
+        id=9,
+        title="回退展示的最近时政",
+        link="https://www.gov.cn/test",
+        source="gov_cn",
+        category="时政",
+        summary="测试摘要",
+        content="测试正文",
+        published="2026-04-10",
+        published_at=datetime(2026, 4, 10, tzinfo=timezone.utc),
+        year=2026,
+        month=4,
+    )
+
+    monkeypatch.setattr(web, "query_news", lambda **kwargs: ([fake_item], [2026, 2025]))
+    monkeypatch.setattr(web, "today_news", lambda news_items, limit=None: ([], "今日时政（2026-04-11）"))
+    monkeypatch.setattr(web, "get_year_counts", lambda min_year=None: {2026: 1, 2025: 0})
+
+    response = client.get("/")
+    assert response.status_code == 200
+    assert "今日暂无更新，已显示最近时政" in response.text
+    assert "回退展示的最近时政" in response.text
+
+
 def test_status_page(client):
     """测试同步状态页面"""
     response = client.get("/status")

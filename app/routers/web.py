@@ -1358,17 +1358,24 @@ async def today_page(
     category_counts = _category_counts(all_recent_items)
     filtered_recent_items = _filter_items_by_source(all_recent_items, source)
     items, title = today_news(filtered_recent_items, limit=None)
-    page_items, current_page, total_pages = _paginate_sequence(items, page, ITEMS_PER_PAGE)
+    display_items = items or filtered_recent_items
+    display_title = title if items else "今日暂无更新，已显示最近时政"
+    display_subtitle = (
+        "只显示数据库里日期为今天的内容，作为门户首页的主时间线。"
+        if items
+        else "当前还没有归档为今天的内容，首页已自动回退展示数据库里的最近更新。"
+    )
+    page_items, current_page, total_pages = _paginate_sequence(display_items, page, ITEMS_PER_PAGE)
     year_counts = get_year_counts(min_year=MIN_FILTER_YEAR)
-    headline_items = items or filtered_recent_items
+    headline_items = display_items
     lead_story = headline_items[0] if headline_items else None
     supporting_items = headline_items[1:5] if len(headline_items) > 1 else []
 
     main_html = (
         _render_headline_block(lead_story, supporting_items)
         + "<section class='panel'>"
-        f"<div class='panel-head'><div><h2>{escape(title)}</h2><div class='panel-subtitle'>只显示数据库里日期为今天的内容，作为门户首页的主时间线。</div></div><span>{len(items)} 条</span></div>"
-        + _render_scroll_shell(_render_news_stream(page_items, "今天还没有抓取到时政内容。"))
+        f"<div class='panel-head'><div><h2>{escape(display_title)}</h2><div class='panel-subtitle'>{escape(display_subtitle)}</div></div><span>{len(display_items)} 条</span></div>"
+        + _render_scroll_shell(_render_news_stream(page_items, "数据库里还没有可展示的内容。"))
         + _render_pager("/today", current_page, total_pages, source=source)
         + "</section>"
         + "<section class='panel'>"
@@ -1385,7 +1392,7 @@ async def today_page(
     return _render_layout(
         active_tab="today",
         hero_title="今日时政",
-        hero_text="适合当天快速刷一遍。这里只显示数据库中归档为今天的时政内容。",
+        hero_text="适合当天快速刷一遍。若当天暂时没有新内容，首页会自动回退展示最近更新，避免出现空白页。",
         stats=[
             ("今日条数", str(len(items))),
             ("数据库总条数", str(count_news_records())),
