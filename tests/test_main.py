@@ -1,6 +1,7 @@
 """FastAPI主应用测试"""
 
 from datetime import datetime, timezone
+from types import SimpleNamespace
 
 
 def test_home_page(client):
@@ -30,10 +31,11 @@ def test_archive_page(client):
 
 def test_search_page_with_filters_and_pagination(client):
     """测试搜索页带筛选和分页参数"""
-    response = client.get("/search?q=%E6%B5%8B%E8%AF%95&year=2025&page=1")
+    response = client.get("/search?q=%E6%B5%8B%E8%AF%95&year=2025&source=people_cn&page=1")
     assert response.status_code == 200
     assert "搜索结果" in response.text
     assert "搜索数据库" in response.text
+    assert "全部来源" in response.text
 
 
 def test_year_pages(client):
@@ -65,6 +67,34 @@ def test_status_page(client):
     assert response.status_code == 200
     assert "同步状态" in response.text
     assert "同步近两年到数据库" in response.text
+
+
+def test_news_detail_page(client, monkeypatch):
+    """测试站内详情页"""
+    from app.routers import web
+
+    fake_item = SimpleNamespace(
+        id=1,
+        title="测试时政标题",
+        link="https://example.com/article",
+        source="people_cn",
+        summary="测试摘要",
+        content="第一段内容\n第二段内容",
+        published="2026-04-11",
+        published_at=datetime(2026, 4, 11, tzinfo=timezone.utc),
+        year=2026,
+        month=4,
+    )
+
+    monkeypatch.setattr(web, "get_news_by_id", lambda news_id: fake_item if news_id == 1 else None)
+    monkeypatch.setattr(web, "query_news", lambda **kwargs: ([fake_item], [2026, 2025]))
+    monkeypatch.setattr(web, "get_year_counts", lambda min_year=None: {2026: 1, 2025: 0})
+
+    response = client.get("/news/1")
+    assert response.status_code == 200
+    assert "站内详情" in response.text
+    assert "测试时政标题" in response.text
+    assert "人民网" in response.text
 
 
 def test_api_news_endpoint(client):

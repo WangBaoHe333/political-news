@@ -15,10 +15,12 @@ from fastapi.responses import HTMLResponse
 
 from app.news_data import (
     count_news_records,
+    get_news_by_id,
     get_year_counts,
     group_by_month,
     latest_news_date,
     query_news,
+    source_label,
     today_news,
     yesterday_news,
 )
@@ -30,6 +32,20 @@ LOCAL_TZ = ZoneInfo("Asia/Shanghai")
 MIN_FILTER_YEAR = 2025
 ITEMS_PER_PAGE = 12
 MONTHS_PER_PAGE = 4
+
+
+def _filter_items_by_source(items: Sequence, selected_source: Optional[str]) -> List:
+    if not selected_source:
+        return list(items)
+    return [item for item in items if item.source == selected_source]
+
+
+def _source_counts(items: Sequence) -> Dict[str, int]:
+    counts: Dict[str, int] = {}
+    for item in items:
+        source = item.source or "unknown"
+        counts[source] = counts.get(source, 0) + 1
+    return dict(sorted(counts.items(), key=lambda entry: (-entry[1], source_label(entry[0]))))
 
 
 def _highlight_text(text: str, keyword: Optional[str]) -> str:
@@ -90,13 +106,17 @@ def _render_news_card(item, keyword: Optional[str] = None) -> str:
     title = _highlight_text(item.title, keyword)
     link = escape(item.link)
     published = escape(item.published or item.published_at.strftime("%Y-%m-%d"))
-    source = escape(item.source or "unknown")
+    source = escape(source_label(item.source))
     excerpt = _highlight_text((item.summary or item.content or item.title or "")[:180], keyword)
     return (
         "<article class='news-card'>"
         f"<div class='news-meta'><span>{published}</span><span>{source}</span></div>"
-        f"<h4><a href='{link}' target='_blank' rel='noreferrer'>{title}</a></h4>"
+        f"<h4><a href='/news/{item.id}'>{title}</a></h4>"
         f"<p>{excerpt}</p>"
+        "<div class='card-actions'>"
+        f"<a class='inline-link' href='/news/{item.id}'>站内查看</a>"
+        f"<a class='inline-link' href='{link}' target='_blank' rel='noreferrer'>查看原文</a>"
+        "</div>"
         "</article>"
     )
 
@@ -114,11 +134,11 @@ def _render_recent_updates(items, empty_text: str) -> str:
     blocks = []
     for item in items[:6]:
         published = escape(item.published or item.published_at.strftime("%Y-%m-%d"))
-        source = escape(item.source or "unknown")
+        source = escape(source_label(item.source))
         blocks.append(
             "<article class='mini-card'>"
             f"<div class='mini-date'>{published} · {source}</div>"
-            f"<h4><a href='{escape(item.link)}' target='_blank' rel='noreferrer'>{escape(item.title)}</a></h4>"
+            f"<h4><a href='/news/{item.id}'>{escape(item.title)}</a></h4>"
             f"<p>{escape((item.summary or item.content or item.title or '')[:110])}</p>"
             "</article>"
         )
@@ -157,6 +177,21 @@ def _render_year_select(year_counts: Dict[int, int], current_year: int, selected
     return "".join(options)
 
 
+def _render_source_select(source_counts: Dict[str, int], selected_source: Optional[str]) -> str:
+    options = ['<option value="">全部来源</option>']
+    sources = list(source_counts.keys())
+    if selected_source and selected_source not in source_counts:
+        sources.append(selected_source)
+
+    for source in sources:
+        selected = " selected" if source == selected_source else ""
+        count_text = f" ({source_counts.get(source, 0)})" if source_counts.get(source, 0) else ""
+        options.append(
+            f"<option value='{escape(source)}'{selected}>{escape(source_label(source))}{count_text}</option>"
+        )
+    return "".join(options)
+
+
 def _render_year_grid(year_counts: Dict[int, int], current_year: int) -> str:
     years = _visible_years(year_counts, current_year)
     if not years:
@@ -172,6 +207,29 @@ def _render_year_grid(year_counts: Dict[int, int], current_year: int) -> str:
             "</a>".format(_build_href(f"/year/{year}"), year, count)
         )
     return "<div class='year-grid'>" + "".join(cards) + "</div>"
+
+
+def _render_source_grid(source_counts: Dict[str, int], active_source: Optional[str], path: str, **params) -> str:
+    if not source_counts and not active_source:
+        return "<div class='empty-state'>当前还没有可展示的来源分布。</div>"
+
+    chips = [
+        "<a class='source-chip{}' href='{}'>全部来源</a>".format(
+            " active" if not active_source else "",
+            _build_href(path, source=None, **params),
+        )
+    ]
+
+    for source, count in source_counts.items():
+        chips.append(
+            "<a class='source-chip{}' href='{}'>{} <span>{}</span></a>".format(
+                " active" if source == active_source else "",
+                _build_href(path, source=source, **params),
+                escape(source_label(source)),
+                count,
+            )
+        )
+    return "<div class='source-grid'>" + "".join(chips) + "</div>"
 
 
 def _render_sync_panel(task_status: Dict[str, object], last_sync_at: str, last_sync_result: str) -> str:
@@ -214,6 +272,19 @@ def _render_sync_panel(task_status: Dict[str, object], last_sync_at: str, last_s
     """
 
 
+def _render_article_body(item) -> str:
+    content = (item.content or "").strip()
+    summary = (item.summary or "").strip()
+    body_text = content or summary
+    if not body_text:
+        return "<div class='empty-state'>这条内容暂时没有抓到正文，建议点击原文查看。</div>"
+
+    paragraphs = [segment.strip() for segment in re.split(r"[\r\n]+", body_text) if segment.strip()]
+    if not paragraphs:
+        paragraphs = [body_text]
+    return "".join(f"<p>{escape(paragraph)}</p>" for paragraph in paragraphs)
+
+
 def _render_nav(active_tab: str) -> str:
     tabs = [
         ("latest", "/", "最新时政"),
@@ -241,8 +312,10 @@ def _render_layout(
     main_html: str,
     side_html: str,
     year_counts: Dict[int, int],
+    source_counts: Dict[str, int],
     current_year: int,
     selected_year: Optional[int] = None,
+    selected_source: Optional[str] = None,
     search_query: str = "",
     page_title: Optional[str] = None,
 ) -> HTMLResponse:
@@ -481,12 +554,56 @@ def _render_layout(
           color: #2d3740;
           line-height: 1.72;
         }}
+        .card-actions {{
+          display: flex;
+          flex-wrap: wrap;
+          gap: 10px;
+          margin-top: 10px;
+        }}
+        .inline-link {{
+          display: inline-flex;
+          align-items: center;
+          padding: 7px 12px;
+          border-radius: 999px;
+          background: rgba(35, 92, 121, 0.08);
+          color: var(--accent-2);
+          font-size: 13px;
+          font-weight: 700;
+        }}
         .mini-card {{
           padding: 12px 0;
         }}
         .mini-date {{
           font-size: 12px;
           color: var(--muted);
+        }}
+        .source-grid {{
+          display: flex;
+          flex-wrap: wrap;
+          gap: 10px;
+        }}
+        .source-chip {{
+          display: inline-flex;
+          align-items: center;
+          gap: 8px;
+          padding: 10px 12px;
+          border-radius: 999px;
+          border: 1px solid var(--line);
+          background: rgba(255,255,255,0.76);
+          color: var(--ink);
+          font-size: 14px;
+        }}
+        .source-chip span {{
+          color: var(--muted);
+          font-size: 12px;
+        }}
+        .source-chip.active {{
+          background: var(--accent);
+          border-color: transparent;
+          color: white;
+        }}
+        .source-chip.active span {{
+          color: rgba(255,255,255,0.82);
         }}
         .year-grid {{
           display: grid;
@@ -626,6 +743,24 @@ def _render_layout(
           background: rgba(255,255,255,0.76);
           font-size: 14px;
         }}
+        .article-shell {{
+          display: grid;
+          gap: 18px;
+        }}
+        .article-meta-grid {{
+          display: grid;
+          grid-template-columns: repeat(4, minmax(0, 1fr));
+          gap: 10px;
+        }}
+        .article-body {{
+          display: grid;
+          gap: 14px;
+          line-height: 1.9;
+          font-size: 17px;
+        }}
+        .article-body p {{
+          margin: 0;
+        }}
         mark {{
           padding: 0 4px;
           border-radius: 6px;
@@ -635,11 +770,12 @@ def _render_layout(
         @media (max-width: 1080px) {{
           .layout {{ grid-template-columns: 1fr; }}
           .stats {{ grid-template-columns: repeat(2, minmax(0, 1fr)); }}
+          .article-meta-grid {{ grid-template-columns: repeat(2, minmax(0, 1fr)); }}
         }}
         @media (max-width: 720px) {{
           .shell {{ padding-inline: 12px; }}
           .hero {{ padding: 20px; }}
-          .stats, .sync-grid {{ grid-template-columns: 1fr; }}
+          .stats, .sync-grid, .article-meta-grid {{ grid-template-columns: 1fr; }}
         }}
       </style>
     </head>
@@ -656,6 +792,7 @@ def _render_layout(
             <form method="get" action="/search" class="search-form">
               <input type="text" name="q" value="{escape(search_query)}" placeholder="搜索标题、正文、来源或日期关键词" />
               <select name="year">{_render_year_select(year_counts, current_year, selected_year)}</select>
+              <select name="source">{_render_source_select(source_counts, selected_source)}</select>
               <button type="submit">搜索数据库</button>
               <a class="ghost-link" href="/status">去同步页面</a>
             </form>
@@ -708,11 +845,23 @@ def _render_layout(
     return HTMLResponse(content=html, status_code=200)
 
 
-def _shared_sidebar(year_counts: Dict[int, int], current_year: int, recent_items) -> str:
+def _shared_sidebar(
+    year_counts: Dict[int, int],
+    current_year: int,
+    recent_items,
+    source_counts: Dict[str, int],
+    source_path: str,
+    active_source: Optional[str] = None,
+    **source_params,
+) -> str:
     return (
         "<section class='panel'>"
         "<div class='panel-head'><div><h2>年份入口</h2><div class='panel-subtitle'>点击年份进入独立页面查看该年的全部时政。</div></div></div>"
         + _render_year_grid(year_counts, current_year)
+        + "</section>"
+        + "<section class='panel'>"
+        "<div class='panel-head'><div><h2>来源筛选</h2><div class='panel-subtitle'>上线后用户最常见的动作之一，就是按来源快速缩小范围。</div></div></div>"
+        + _render_source_grid(source_counts, active_source, source_path, **source_params)
         + "</section>"
         + "<section class='panel'>"
         "<div class='panel-head'><div><h2>最近更新</h2><div class='panel-subtitle'>这里展示数据库里最新写入的时政内容。</div></div></div>"
@@ -723,28 +872,40 @@ def _shared_sidebar(year_counts: Dict[int, int], current_year: int, recent_items
 
 @router.get("/", response_class=HTMLResponse)
 @router.get("/latest", response_class=HTMLResponse)
-async def latest_page(page: int = Query(default=1, ge=1)):
+async def latest_page(
+    page: int = Query(default=1, ge=1),
+    source: Optional[str] = Query(default=None),
+):
     current_year = datetime.now(LOCAL_TZ).year
-    recent_items, _ = query_news(year=None, search=None, months=24)
+    all_recent_items, _ = query_news(year=None, search=None, months=24)
+    source_counts = _source_counts(all_recent_items)
+    recent_items = _filter_items_by_source(all_recent_items, source)
     page_items, current_page, total_pages = _paginate_sequence(recent_items, page, ITEMS_PER_PAGE)
     year_counts = get_year_counts(min_year=MIN_FILTER_YEAR)
-    latest_date = latest_news_date(recent_items)
+    latest_date = latest_news_date(all_recent_items)
 
     main_html = (
         "<section class='panel'>"
         "<div class='panel-head'><div><h2>最新时政</h2><div class='panel-subtitle'>全部内容直接从数据库读取，按发布时间倒序展示。</div></div>"
         f"<span>{len(recent_items)} 条</span></div>"
         + _render_news_stream(page_items, "数据库中还没有最近两年的时政内容，请先同步。")
-        + _render_pager("/", current_page, total_pages)
+        + _render_pager("/", current_page, total_pages, source=source)
         + "</section>"
     )
 
-    side_html = _shared_sidebar(year_counts, current_year, recent_items)
+    side_html = _shared_sidebar(
+        year_counts,
+        current_year,
+        all_recent_items,
+        source_counts,
+        "/",
+        active_source=source,
+    )
     stats = [
         ("数据库总条数", str(count_news_records())),
-        ("最近两年条数", str(len(recent_items))),
+        ("最近两年条数", str(len(all_recent_items))),
+        ("当前来源", source_label(source) if source else "全部来源"),
         ("最新发布日期", latest_date.strftime("%Y-%m-%d") if latest_date else "暂无数据"),
-        ("当前页码", f"{current_page}/{total_pages}"),
     ]
     return _render_layout(
         active_tab="latest",
@@ -754,16 +915,23 @@ async def latest_page(page: int = Query(default=1, ge=1)):
         main_html=main_html,
         side_html=side_html,
         year_counts=year_counts,
+        source_counts=source_counts,
         current_year=current_year,
+        selected_source=source,
         page_title="最新时政",
     )
 
 
 @router.get("/today", response_class=HTMLResponse)
-async def today_page(page: int = Query(default=1, ge=1)):
+async def today_page(
+    page: int = Query(default=1, ge=1),
+    source: Optional[str] = Query(default=None),
+):
     current_year = datetime.now(LOCAL_TZ).year
-    recent_items, _ = query_news(year=None, search=None, months=24)
-    items, title = today_news(recent_items, limit=None)
+    all_recent_items, _ = query_news(year=None, search=None, months=24)
+    source_counts = _source_counts(all_recent_items)
+    filtered_recent_items = _filter_items_by_source(all_recent_items, source)
+    items, title = today_news(filtered_recent_items, limit=None)
     page_items, current_page, total_pages = _paginate_sequence(items, page, ITEMS_PER_PAGE)
     year_counts = get_year_counts(min_year=MIN_FILTER_YEAR)
 
@@ -771,7 +939,7 @@ async def today_page(page: int = Query(default=1, ge=1)):
         "<section class='panel'>"
         f"<div class='panel-head'><div><h2>{escape(title)}</h2><div class='panel-subtitle'>只显示数据库里日期为今天的内容。</div></div><span>{len(items)} 条</span></div>"
         + _render_news_stream(page_items, "今天还没有抓取到时政内容。")
-        + _render_pager("/today", current_page, total_pages)
+        + _render_pager("/today", current_page, total_pages, source=source)
         + "</section>"
     )
 
@@ -783,21 +951,35 @@ async def today_page(page: int = Query(default=1, ge=1)):
             ("今日条数", str(len(items))),
             ("数据库总条数", str(count_news_records())),
             ("年份覆盖", f"{min(_visible_years(year_counts, current_year), default=current_year)}-{current_year}"),
-            ("当前页码", f"{current_page}/{total_pages}"),
+            ("当前来源", source_label(source) if source else "全部来源"),
         ],
         main_html=main_html,
-        side_html=_shared_sidebar(year_counts, current_year, recent_items),
+        side_html=_shared_sidebar(
+            year_counts,
+            current_year,
+            all_recent_items,
+            source_counts,
+            "/today",
+            active_source=source,
+        ),
         year_counts=year_counts,
+        source_counts=source_counts,
         current_year=current_year,
+        selected_source=source,
         page_title="今日时政",
     )
 
 
 @router.get("/yesterday", response_class=HTMLResponse)
-async def yesterday_page(page: int = Query(default=1, ge=1)):
+async def yesterday_page(
+    page: int = Query(default=1, ge=1),
+    source: Optional[str] = Query(default=None),
+):
     current_year = datetime.now(LOCAL_TZ).year
-    recent_items, _ = query_news(year=None, search=None, months=24)
-    items, title = yesterday_news(recent_items, limit=None)
+    all_recent_items, _ = query_news(year=None, search=None, months=24)
+    source_counts = _source_counts(all_recent_items)
+    filtered_recent_items = _filter_items_by_source(all_recent_items, source)
+    items, title = yesterday_news(filtered_recent_items, limit=None)
     page_items, current_page, total_pages = _paginate_sequence(items, page, ITEMS_PER_PAGE)
     year_counts = get_year_counts(min_year=MIN_FILTER_YEAR)
 
@@ -805,7 +987,7 @@ async def yesterday_page(page: int = Query(default=1, ge=1)):
         "<section class='panel'>"
         f"<div class='panel-head'><div><h2>{escape(title)}</h2><div class='panel-subtitle'>单独拎出来做一页，方便回看昨天的重要信息。</div></div><span>{len(items)} 条</span></div>"
         + _render_news_stream(page_items, "昨天还没有抓取到时政内容。")
-        + _render_pager("/yesterday", current_page, total_pages)
+        + _render_pager("/yesterday", current_page, total_pages, source=source)
         + "</section>"
     )
 
@@ -817,20 +999,34 @@ async def yesterday_page(page: int = Query(default=1, ge=1)):
             ("昨日条数", str(len(items))),
             ("数据库总条数", str(count_news_records())),
             ("年份覆盖", f"{min(_visible_years(year_counts, current_year), default=current_year)}-{current_year}"),
-            ("当前页码", f"{current_page}/{total_pages}"),
+            ("当前来源", source_label(source) if source else "全部来源"),
         ],
         main_html=main_html,
-        side_html=_shared_sidebar(year_counts, current_year, recent_items),
+        side_html=_shared_sidebar(
+            year_counts,
+            current_year,
+            all_recent_items,
+            source_counts,
+            "/yesterday",
+            active_source=source,
+        ),
         year_counts=year_counts,
+        source_counts=source_counts,
         current_year=current_year,
+        selected_source=source,
         page_title="昨日时政",
     )
 
 
 @router.get("/archive", response_class=HTMLResponse)
-async def archive_page(page: int = Query(default=1, ge=1)):
+async def archive_page(
+    page: int = Query(default=1, ge=1),
+    source: Optional[str] = Query(default=None),
+):
     current_year = datetime.now(LOCAL_TZ).year
-    recent_items, _ = query_news(year=None, search=None, months=24)
+    all_recent_items, _ = query_news(year=None, search=None, months=24)
+    source_counts = _source_counts(all_recent_items)
+    recent_items = _filter_items_by_source(all_recent_items, source)
     groups = group_by_month(recent_items)
     entries = list(groups.items())
     page_entries, current_page, total_pages = _paginate_sequence(entries, page, MONTHS_PER_PAGE)
@@ -842,7 +1038,7 @@ async def archive_page(page: int = Query(default=1, ge=1)):
         "<div class='panel-head'><div><h2>按月归档</h2><div class='panel-subtitle'>默认折叠显示，每页只看少量月份，避免页面过长。</div></div>"
         f"<span>{len(groups)} 个月</span></div>"
         + _render_month_groups(visible_groups)
-        + _render_pager("/archive", current_page, total_pages)
+        + _render_pager("/archive", current_page, total_pages, source=source)
         + "</section>"
     )
 
@@ -852,14 +1048,23 @@ async def archive_page(page: int = Query(default=1, ge=1)):
         hero_text="适合系统复习。每个月是独立折叠块，展开后查看该月全部时政内容。",
         stats=[
             ("归档月份", str(len(groups))),
-            ("最近两年条数", str(len(recent_items))),
+            ("最近两年条数", str(len(all_recent_items))),
             ("数据库总条数", str(count_news_records())),
-            ("当前页码", f"{current_page}/{total_pages}"),
+            ("当前来源", source_label(source) if source else "全部来源"),
         ],
         main_html=main_html,
-        side_html=_shared_sidebar(year_counts, current_year, recent_items),
+        side_html=_shared_sidebar(
+            year_counts,
+            current_year,
+            all_recent_items,
+            source_counts,
+            "/archive",
+            active_source=source,
+        ),
         year_counts=year_counts,
+        source_counts=source_counts,
         current_year=current_year,
+        selected_source=source,
         page_title="按月归档",
     )
 
@@ -869,6 +1074,7 @@ async def years_page():
     current_year = datetime.now(LOCAL_TZ).year
     year_counts = get_year_counts(min_year=MIN_FILTER_YEAR)
     recent_items, _ = query_news(year=None, search=None, months=24)
+    source_counts = _source_counts(recent_items)
 
     main_html = (
         "<section class='panel'>"
@@ -888,17 +1094,30 @@ async def years_page():
             ("最近两年条数", str(len(recent_items))),
         ],
         main_html=main_html,
-        side_html=_shared_sidebar(year_counts, current_year, recent_items),
+        side_html=_shared_sidebar(
+            year_counts,
+            current_year,
+            recent_items,
+            source_counts,
+            "/years",
+        ),
         year_counts=year_counts,
+        source_counts=source_counts,
         current_year=current_year,
         page_title="年份切换",
     )
 
 
 @router.get("/year/{year}", response_class=HTMLResponse)
-async def year_detail_page(year: int, page: int = Query(default=1, ge=1)):
+async def year_detail_page(
+    year: int,
+    page: int = Query(default=1, ge=1),
+    source: Optional[str] = Query(default=None),
+):
     current_year = datetime.now(LOCAL_TZ).year
-    items, _ = query_news(year=year, search=None, months=None)
+    all_items, _ = query_news(year=year, search=None, months=None)
+    source_counts = _source_counts(all_items)
+    items = _filter_items_by_source(all_items, source)
     page_items, current_page, total_pages = _paginate_sequence(items, page, ITEMS_PER_PAGE)
     year_counts = get_year_counts(min_year=MIN_FILTER_YEAR)
     recent_items, _ = query_news(year=None, search=None, months=24)
@@ -907,7 +1126,7 @@ async def year_detail_page(year: int, page: int = Query(default=1, ge=1)):
         "<section class='panel'>"
         f"<div class='panel-head'><div><h2>{year} 年时政</h2><div class='panel-subtitle'>该页面只展示 {year} 年的数据库内容。</div></div><span>{len(items)} 条</span></div>"
         + _render_news_stream(page_items, f"{year} 年还没有同步到数据库。")
-        + _render_pager(f"/year/{year}", current_page, total_pages)
+        + _render_pager(f"/year/{year}", current_page, total_pages, source=source)
         + "</section>"
     )
 
@@ -917,15 +1136,24 @@ async def year_detail_page(year: int, page: int = Query(default=1, ge=1)):
         hero_text="这是年份独立页面，适合按年梳理资料，不需要在首页里来回切换。",
         stats=[
             ("年份", str(year)),
-            ("当年条数", str(len(items))),
+            ("当年条数", str(len(all_items))),
             ("数据库总条数", str(count_news_records())),
-            ("当前页码", f"{current_page}/{total_pages}"),
+            ("当前来源", source_label(source) if source else "全部来源"),
         ],
         main_html=main_html,
-        side_html=_shared_sidebar(year_counts, current_year, recent_items),
+        side_html=_shared_sidebar(
+            year_counts,
+            current_year,
+            recent_items,
+            source_counts,
+            f"/year/{year}",
+            active_source=source,
+        ),
         year_counts=year_counts,
+        source_counts=source_counts,
         current_year=current_year,
         selected_year=year,
+        selected_source=source,
         page_title=f"{year} 年时政",
     )
 
@@ -934,14 +1162,17 @@ async def year_detail_page(year: int, page: int = Query(default=1, ge=1)):
 async def search_page(
     q: Optional[str] = Query(default=None),
     year: Optional[int] = Query(default=None),
+    source: Optional[str] = Query(default=None),
     page: int = Query(default=1, ge=1),
 ):
     current_year = datetime.now(LOCAL_TZ).year
     keyword = (q or "").strip()
     items = []
-    years = []
+    source_counts: Dict[str, int] = {}
     if keyword:
-        items, years = query_news(year=year, search=keyword, months=None)
+        raw_items, _ = query_news(year=year, search=keyword, months=None)
+        source_counts = _source_counts(raw_items)
+        items = _filter_items_by_source(raw_items, source)
     year_counts = get_year_counts(min_year=MIN_FILTER_YEAR)
     recent_items, _ = query_news(year=None, search=None, months=24)
     page_items, current_page, total_pages = _paginate_sequence(items, page, ITEMS_PER_PAGE)
@@ -949,6 +1180,8 @@ async def search_page(
     subtitle = "输入关键词后会直接在数据库中搜索标题、摘要、正文、来源和日期。"
     if year:
         subtitle = f"当前把搜索范围限制在 {year} 年。"
+    if source:
+        subtitle += f" 当前来源筛选为 {source_label(source)}。"
 
     main_html = (
         "<section class='panel'>"
@@ -956,7 +1189,7 @@ async def search_page(
         + (
             _render_news_stream(page_items, "请输入关键词后开始搜索。" if not keyword else f"没有找到关键词「{keyword}」匹配的内容。", keyword=keyword)
         )
-        + _render_pager("/search", current_page, total_pages, q=keyword, year=year)
+        + _render_pager("/search", current_page, total_pages, q=keyword, year=year, source=source)
         + "</section>"
     )
 
@@ -970,7 +1203,16 @@ async def search_page(
         "<span class='helper-chip'>例：人民网</span>"
         "</div>"
         "</section>"
-        + _shared_sidebar(year_counts, current_year, recent_items)
+        + _shared_sidebar(
+            year_counts,
+            current_year,
+            recent_items,
+            source_counts,
+            "/search",
+            active_source=source,
+            q=keyword,
+            year=year,
+        )
     )
 
     return _render_layout(
@@ -981,15 +1223,90 @@ async def search_page(
             ("搜索关键词", keyword or "未输入"),
             ("命中结果", str(len(items))),
             ("年份限制", str(year) if year else "全部年份"),
-            ("当前页码", f"{current_page}/{total_pages}"),
+            ("当前来源", source_label(source) if source else "全部来源"),
         ],
         main_html=main_html,
         side_html=side_html,
         year_counts=year_counts,
+        source_counts=source_counts,
         current_year=current_year,
         selected_year=year,
+        selected_source=source,
         search_query=keyword,
         page_title="搜索数据库",
+    )
+
+
+@router.get("/news/{news_id}", response_class=HTMLResponse)
+async def news_detail_page(news_id: int):
+    item = get_news_by_id(news_id)
+    if item is None:
+        return HTMLResponse(
+            content="<h1>未找到内容</h1><p>这条时政可能尚未同步，或者已经不存在。</p>",
+            status_code=404,
+        )
+
+    current_year = datetime.now(LOCAL_TZ).year
+    year_counts = get_year_counts(min_year=MIN_FILTER_YEAR)
+    recent_items, _ = query_news(year=None, search=None, months=24)
+    source_counts = _source_counts(recent_items)
+    related_items = [
+        related
+        for related in recent_items
+        if related.id != item.id and (related.source == item.source or related.year == item.year)
+    ][:6]
+
+    main_html = (
+        "<section class='panel article-shell'>"
+        "<div class='panel-head'><div><h2>站内详情</h2><div class='panel-subtitle'>上线产品后，列表页应该能自然进入详情页，而不是直接把用户甩到外站。</div></div></div>"
+        "<div class='article-meta-grid'>"
+        f"<div class='sync-item'><strong>发布日期</strong><span>{escape(item.published or item.published_at.strftime('%Y-%m-%d'))}</span></div>"
+        f"<div class='sync-item'><strong>来源</strong><span>{escape(source_label(item.source))}</span></div>"
+        f"<div class='sync-item'><strong>年份</strong><span>{item.year} 年</span></div>"
+        f"<div class='sync-item'><strong>月份</strong><span>{item.month} 月</span></div>"
+        "</div>"
+        "<div class='actions'>"
+        f"<a class='ghost-link' href='{escape(item.link)}' target='_blank' rel='noreferrer'>查看原文</a>"
+        f"<a class='ghost-link' href='{_build_href(f'/year/{item.year}', source=item.source)}'>查看同年同来源</a>"
+        "</div>"
+        f"<div class='notice'><strong>摘要：</strong>{escape(item.summary or '暂无摘要')}</div>"
+        f"<div class='article-body'>{_render_article_body(item)}</div>"
+        "</section>"
+    )
+
+    side_html = (
+        "<section class='panel'>"
+        "<div class='panel-head'><div><h2>相关推荐</h2><div class='panel-subtitle'>优先展示同来源或同年份的近篇内容，减少读完一条就断开的感觉。</div></div></div>"
+        + _render_recent_updates(related_items, "当前没有可推荐的相关文章。")
+        + "</section>"
+        + _shared_sidebar(
+            year_counts,
+            current_year,
+            recent_items,
+            source_counts,
+            f"/year/{item.year}",
+            active_source=item.source,
+        )
+    )
+
+    return _render_layout(
+        active_tab="latest",
+        hero_title=item.title,
+        hero_text="详情页让数据库内容真正变成可阅读的产品，而不只是一个跳板列表。",
+        stats=[
+            ("来源", source_label(item.source)),
+            ("发布日期", item.published or item.published_at.strftime("%Y-%m-%d")),
+            ("年份", f"{item.year} 年"),
+            ("数据库总条数", str(count_news_records())),
+        ],
+        main_html=main_html,
+        side_html=side_html,
+        year_counts=year_counts,
+        source_counts=source_counts,
+        current_year=current_year,
+        selected_year=item.year,
+        selected_source=item.source,
+        page_title=item.title,
     )
 
 
@@ -998,12 +1315,19 @@ async def status_page(sync_status: str = Query(default="")):
     current_year = datetime.now(LOCAL_TZ).year
     year_counts = get_year_counts(min_year=MIN_FILTER_YEAR)
     recent_items, _ = query_news(year=None, search=None, months=24)
+    source_counts = _source_counts(recent_items)
     task_status = get_sync_status()
     last_sync_at = get_app_state("last_sync_at", "尚未同步")
     last_sync_result = sync_status or get_app_state("last_sync_result", "")
 
     main_html = _render_sync_panel(task_status, last_sync_at, last_sync_result)
-    side_html = _shared_sidebar(year_counts, current_year, recent_items)
+    side_html = _shared_sidebar(
+        year_counts,
+        current_year,
+        recent_items,
+        source_counts,
+        "/status",
+    )
 
     return _render_layout(
         active_tab="status",
@@ -1018,6 +1342,7 @@ async def status_page(sync_status: str = Query(default="")):
         main_html=main_html,
         side_html=side_html,
         year_counts=year_counts,
+        source_counts=source_counts,
         current_year=current_year,
         page_title="同步状态",
     )

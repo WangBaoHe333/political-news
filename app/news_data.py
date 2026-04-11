@@ -10,6 +10,14 @@ from sqlalchemy import func, or_
 from app.database import SessionLocal
 from app.models import News
 
+SOURCE_LABELS = {
+    "gov_cn": "中国政府网",
+    "people_cn": "人民网",
+    "xinhuanet": "新华网",
+    "chinanews": "中国新闻网",
+    "sina": "新浪新闻",
+}
+
 
 def _build_search_filter(query_text: str):
     normalized = (query_text or "").strip()
@@ -32,6 +40,7 @@ def query_news(
     year: Optional[int] = None,
     search: Optional[str] = None,
     months: Optional[int] = 24,
+    source: Optional[str] = None,
 ) -> Tuple[List[News], List[int]]:
     db = SessionLocal()
     try:
@@ -47,11 +56,28 @@ def query_news(
         if search_filter is not None:
             query = query.filter(search_filter)
 
+        if source:
+            query = query.filter(News.source == source)
+
         news_items = query.order_by(News.published_at.desc()).all()
         years = [value[0] for value in db.query(News.year).distinct().order_by(News.year.desc()).all()]
         return news_items, years
     finally:
         db.close()
+
+
+def get_news_by_id(news_id: int) -> Optional[News]:
+    db = SessionLocal()
+    try:
+        return db.query(News).filter(News.id == news_id).first()
+    finally:
+        db.close()
+
+
+def source_label(source: Optional[str]) -> str:
+    if not source:
+        return "未知来源"
+    return SOURCE_LABELS.get(source, source)
 
 
 def get_year_counts(min_year: Optional[int] = None) -> Dict[int, int]:
