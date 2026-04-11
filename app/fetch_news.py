@@ -87,6 +87,16 @@ CURATED_HTML_SOURCES = [
         "list_urls": ["https://www.news.cn/politics/"],
         "base_url": "https://www.news.cn/",
         "link_keywords": ("/politics/",),
+        "article_patterns": (".shtml", "/20"),
+        "max_entries": 36,
+    },
+    {
+        "source": "cctv",
+        "category": "时政",
+        "list_urls": ["https://news.cctv.com/china/"],
+        "base_url": "https://news.cctv.com/",
+        "link_keywords": (),
+        "article_patterns": (".shtml", "/20"),
         "max_entries": 36,
     },
     {
@@ -100,6 +110,7 @@ CURATED_HTML_SOURCES = [
         ],
         "base_url": "https://www.mfa.gov.cn/",
         "link_keywords": ("/web/ttxw/",),
+        "article_patterns": (".shtml",),
         "max_entries": 40,
     },
 ]
@@ -118,6 +129,10 @@ TRUSTED_SOURCE_RULES = {
     },
     "chinanews": {
         "domains": ("chinanews.com.cn",),
+        "min_content_length": 18,
+    },
+    "cctv": {
+        "domains": ("news.cctv.com",),
         "min_content_length": 18,
     },
     "mfa": {
@@ -272,6 +287,7 @@ def _parse_generic_list_page(html_text, page_url, source_config):
     results = []
     seen_links = set()
     link_keywords = source_config.get("link_keywords", ())
+    article_patterns = source_config.get("article_patterns", ())
     max_entries = source_config.get("max_entries", 30)
 
     def find_date_for_anchor(anchor):
@@ -308,6 +324,8 @@ def _parse_generic_list_page(html_text, page_url, source_config):
         if not _is_allowed_source_link(source_config["source"], href):
             continue
         if link_keywords and not any(keyword in urlparse(href).path for keyword in link_keywords):
+            continue
+        if article_patterns and not any(pattern in urlparse(href).path for pattern in article_patterns):
             continue
         if href.endswith((".jpg", ".png", ".mp4", ".pdf")):
             continue

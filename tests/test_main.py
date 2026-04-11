@@ -43,6 +43,7 @@ def test_categories_and_sources_pages(client):
     assert sources_response.status_code == 200
     assert "数据源" in sources_response.text
     assert "来源覆盖" in sources_response.text
+    assert "央视网" in sources_response.text
 
 
 def test_search_page_with_filters_and_pagination(client):
@@ -86,6 +87,14 @@ def test_category_detail_page(client):
     response = client.get("/category/shizheng?page=1")
     assert response.status_code == 200
     assert "时政专题" in response.text
+
+
+def test_source_detail_page(client):
+    """测试来源详情页"""
+    response = client.get("/source/gov_cn?page=1")
+    assert response.status_code == 200
+    assert "中国政府网" in response.text
+    assert "来源内专题分布" in response.text
 
 
 def test_today_and_yesterday_pages(client):

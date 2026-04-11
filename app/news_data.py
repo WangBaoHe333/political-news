@@ -15,6 +15,7 @@ SOURCE_LABELS = {
     "people_cn": "人民网",
     "xinhuanet": "新华网",
     "chinanews": "中国新闻网",
+    "cctv": "央视网",
     "mfa": "外交部",
     "sina": "新浪新闻",
 }
@@ -23,6 +24,7 @@ SOURCE_TRUST_LABELS = {
     "people_cn": "央媒报道",
     "xinhuanet": "央媒报道",
     "chinanews": "主流媒体",
+    "cctv": "央媒报道",
     "mfa": "部委发布",
     "sina": "转载来源",
 }
@@ -31,6 +33,7 @@ SOURCE_TRUST_NOTES = {
     "people_cn": "人民网时政频道原文或 RSS，同步后保留原文链接。",
     "xinhuanet": "新华网政治频道原文或 RSS，同步后保留原文链接。",
     "chinanews": "中国新闻网中国频道原文或 RSS，同步后保留原文链接。",
+    "cctv": "央视网新闻频道公开发布内容，适合补足权威电视媒体口径。",
     "mfa": "外交部官网公开发布内容，适合补足外交与外事动态。",
     "sina": "仅作历史兼容展示，新同步流程默认不再纳入。",
 }

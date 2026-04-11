@@ -41,6 +41,7 @@ def test_extract_date_invalid_or_empty():
 def test_allowed_source_link_uses_whitelist():
     assert _is_allowed_source_link("gov_cn", "https://www.gov.cn/yaowen/test.htm")
     assert _is_allowed_source_link("xinhuanet", "https://www.news.cn/politics/test.htm")
+    assert _is_allowed_source_link("cctv", "https://news.cctv.com/2026/04/11/ARTItest.shtml")
     assert _is_allowed_source_link("mfa", "https://www.mfa.gov.cn/web/ttxw/test.shtml")
     assert not _is_allowed_source_link("gov_cn", "https://fake.example.com/test.htm")
     assert not _is_allowed_source_link("sina", "https://news.sina.com.cn/test.htm")

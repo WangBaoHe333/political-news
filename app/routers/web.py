@@ -38,7 +38,7 @@ LOCAL_TZ = ZoneInfo("Asia/Shanghai")
 MIN_FILTER_YEAR = 2025
 ITEMS_PER_PAGE = 8
 MONTHS_PER_PAGE = 3
-TRUSTED_SOURCE_ORDER = ("gov_cn", "people_cn", "xinhuanet", "mfa", "chinanews")
+TRUSTED_SOURCE_ORDER = ("gov_cn", "people_cn", "xinhuanet", "cctv", "mfa", "chinanews")
 
 
 def _filter_items_by_source(items: Sequence, selected_source: Optional[str]) -> List:
@@ -88,11 +88,13 @@ def _source_hostname(link: str) -> str:
 
 def _render_source_signature(item) -> str:
     source = escape(source_label(item.source))
+    category = escape(category_label(getattr(item, "category", None)))
     trust = escape(source_trust_label(item.source))
     hostname = escape(_source_hostname(item.link))
     return (
         "<div class='meta-cluster'>"
         f"<span class='meta-pill source'>{source}</span>"
+        f"<span class='meta-pill category'>{category}</span>"
         f"<span class='meta-pill trust'>{trust}</span>"
         f"<span class='meta-pill domain'>{hostname}</span>"
         "</div>"
@@ -169,6 +171,70 @@ def _render_news_stream(items, empty_text: str, keyword: Optional[str] = None) -
 
 def _render_scroll_shell(content: str, variant: str = "stream") -> str:
     return f"<div class='scroll-shell {variant}'>{content}</div>"
+
+
+def _render_headline_block(item, supporting_items) -> str:
+    if item is None:
+        return "<section class='panel'><div class='empty-state'>当前还没有可展示的头条内容。</div></section>"
+
+    lead_title = escape(item.title)
+    lead_excerpt = escape((item.summary or item.content or item.title or "")[:220])
+    lead_published = escape(item.published or item.published_at.strftime("%Y-%m-%d"))
+    support_html = "".join(
+        "<article class='headline-mini'>"
+        f"<span>{escape(other.published or other.published_at.strftime('%Y-%m-%d'))}</span>"
+        f"<a href='/news/{other.id}'>{escape(other.title)}</a>"
+        "</article>"
+        for other in supporting_items
+    )
+    return (
+        "<section class='panel'>"
+        "<div class='panel-head'><div><h2>今日头条</h2><div class='panel-subtitle'>首页先看头条，再看专题和来源，整体会更像资讯门户。</div></div></div>"
+        "<div class='headline-layout'>"
+        "<article class='headline-lead'>"
+        f"<div class='news-meta'><span>{lead_published}</span><span>{escape(source_label(item.source))}</span></div>"
+        f"{_render_source_signature(item)}"
+        f"<h3><a href='/news/{item.id}'>{lead_title}</a></h3>"
+        f"<p>{lead_excerpt}</p>"
+        "<div class='card-actions'>"
+        f"<a class='inline-link' href='/news/{item.id}'>站内查看</a>"
+        f"<a class='inline-link' href='{escape(item.link)}' target='_blank' rel='noreferrer'>查看原文</a>"
+        "</div>"
+        "</article>"
+        "<div class='headline-side'>"
+        + (support_html or "<div class='empty-state'>暂时没有更多头条。</div>")
+        + "</div>"
+        "</div>"
+        "</section>"
+    )
+
+
+def _render_category_shelves(items: Sequence, limit_categories: int = 4, per_category: int = 4) -> str:
+    grouped: Dict[str, List] = {}
+    for item in items:
+        label = category_label(getattr(item, "category", None))
+        grouped.setdefault(label, []).append(item)
+
+    sections = []
+    for label, slug in ((label, slug) for slug, label in CATEGORY_DEFINITIONS.items()):
+        bucket = grouped.get(label, [])
+        if not bucket:
+            continue
+        sections.append(
+            "<section class='panel'>"
+            "<div class='panel-head'>"
+            f"<div><h2>{escape(label)}</h2><div class='panel-subtitle'>按专题聚合近两年内容，减少用户在不同站点之间来回跳。</div></div>"
+            f"<a class='inline-link' href='/category/{slug}'>进入专题</a>"
+            "</div>"
+            + _render_scroll_shell(
+                "".join(_render_news_card(item) for item in bucket[:per_category]),
+                variant="shelf",
+            )
+            + "</section>"
+        )
+        if len(sections) >= limit_categories:
+            break
+    return "".join(sections)
 
 
 def _render_recent_updates(items, empty_text: str) -> str:
@@ -263,7 +329,7 @@ def _render_source_overview(source_counts: Dict[str, int]) -> str:
             "<a class='category-card source-card' href='{}'>"
             "<strong>{}</strong>"
             "<span>{} 条</span>"
-            "</a>".format(_build_href("/search", source=source), escape(source_label(source)), count)
+            "</a>".format(f"/source/{source}", escape(source_label(source)), count)
         )
     return "<div class='category-grid'>" + "".join(cards) + "</div>"
 
@@ -714,6 +780,9 @@ def _render_layout(
         .scroll-shell.months {{
           max-height: min(58vh, 860px);
         }}
+        .scroll-shell.shelf {{
+          max-height: min(42vh, 520px);
+        }}
         .scroll-shell::-webkit-scrollbar {{
           width: 8px;
         }}
@@ -762,6 +831,10 @@ def _render_layout(
           color: var(--accent-2);
           background: rgba(35,92,121,0.09);
         }}
+        .meta-pill.category {{
+          color: #83561b;
+          background: rgba(183,132,43,0.14);
+        }}
         .meta-pill.trust {{
           color: var(--accent);
           background: rgba(160,50,45,0.1);
@@ -786,6 +859,48 @@ def _render_layout(
           flex-wrap: wrap;
           gap: 10px;
           margin-top: 10px;
+        }}
+        .headline-layout {{
+          display: grid;
+          grid-template-columns: minmax(0, 1.3fr) minmax(260px, 0.85fr);
+          gap: 18px;
+        }}
+        .headline-lead {{
+          padding: 18px;
+          border-radius: 20px;
+          background: rgba(255,255,255,0.72);
+          border: 1px solid rgba(35,43,51,0.08);
+        }}
+        .headline-lead h3 {{
+          margin: 0 0 10px;
+          font-size: 28px;
+          line-height: 1.4;
+        }}
+        .headline-lead p {{
+          margin: 0;
+          line-height: 1.8;
+          color: #2d3740;
+        }}
+        .headline-side {{
+          display: grid;
+          gap: 10px;
+        }}
+        .headline-mini {{
+          padding: 14px 16px;
+          border-radius: 18px;
+          background: rgba(255,255,255,0.72);
+          border: 1px solid rgba(35,43,51,0.08);
+        }}
+        .headline-mini span {{
+          display: block;
+          margin-bottom: 6px;
+          font-size: 12px;
+          color: var(--muted);
+        }}
+        .headline-mini a {{
+          font-size: 16px;
+          line-height: 1.7;
+          font-weight: 700;
         }}
         .inline-link {{
           display: inline-flex;
@@ -1067,6 +1182,7 @@ def _render_layout(
         }}
         @media (max-width: 1080px) {{
           .layout {{ grid-template-columns: 1fr; }}
+          .headline-layout {{ grid-template-columns: 1fr; }}
           .side-stack {{
             position: static;
             max-height: none;
@@ -1244,10 +1360,14 @@ async def today_page(
     items, title = today_news(filtered_recent_items, limit=None)
     page_items, current_page, total_pages = _paginate_sequence(items, page, ITEMS_PER_PAGE)
     year_counts = get_year_counts(min_year=MIN_FILTER_YEAR)
+    headline_items = items or filtered_recent_items
+    lead_story = headline_items[0] if headline_items else None
+    supporting_items = headline_items[1:5] if len(headline_items) > 1 else []
 
     main_html = (
-        "<section class='panel'>"
-        f"<div class='panel-head'><div><h2>{escape(title)}</h2><div class='panel-subtitle'>只显示数据库里日期为今天的内容。</div></div><span>{len(items)} 条</span></div>"
+        _render_headline_block(lead_story, supporting_items)
+        + "<section class='panel'>"
+        f"<div class='panel-head'><div><h2>{escape(title)}</h2><div class='panel-subtitle'>只显示数据库里日期为今天的内容，作为门户首页的主时间线。</div></div><span>{len(items)} 条</span></div>"
         + _render_scroll_shell(_render_news_stream(page_items, "今天还没有抓取到时政内容。"))
         + _render_pager("/today", current_page, total_pages, source=source)
         + "</section>"
@@ -1259,6 +1379,7 @@ async def today_page(
         "<div class='panel-head'><div><h2>权威来源</h2><div class='panel-subtitle'>把权威来源单独做成入口，方便直接按站点回看和校验。</div></div></div>"
         + _render_source_overview(source_counts)
         + "</section>"
+        + _render_category_shelves(filtered_recent_items)
     )
 
     return _render_layout(
@@ -1472,6 +1593,59 @@ async def sources_page():
         current_year=current_year,
         selected_year=current_year,
         page_title="数据源",
+    )
+
+
+@router.get("/source/{source}", response_class=HTMLResponse)
+async def source_detail_page(
+    source: str,
+    page: int = Query(default=1, ge=1),
+):
+    current_year = datetime.now(LOCAL_TZ).year
+    all_items, _ = query_news(year=None, search=None, months=24, source=source)
+    page_items, current_page, total_pages = _paginate_sequence(all_items, page, ITEMS_PER_PAGE)
+    source_counts = _source_counts(all_items)
+    recent_items, _ = query_news(year=None, search=None, months=24)
+    year_counts = get_year_counts(min_year=MIN_FILTER_YEAR)
+    category_counts = _category_counts(all_items)
+
+    main_html = (
+        "<section class='panel'>"
+        f"<div class='panel-head'><div><h2>{escape(source_label(source))}</h2><div class='panel-subtitle'>{escape(source_trust_note(source))}</div></div><span>{len(all_items)} 条</span></div>"
+        + _render_scroll_shell(_render_news_stream(page_items, f"{source_label(source)} 暂时还没有收录内容。"))
+        + _render_pager(f"/source/{source}", current_page, total_pages)
+        + "</section>"
+        + "<section class='panel'>"
+        "<div class='panel-head'><div><h2>来源内专题分布</h2><div class='panel-subtitle'>同一来源里也会有要闻、外交、人事、国际等不同专题。</div></div></div>"
+        + _render_category_overview(category_counts)
+        + "</section>"
+    )
+
+    return _render_layout(
+        active_tab="sources",
+        hero_title=f"{source_label(source)}",
+        hero_text="来源详情页帮助你判断单一权威来源的覆盖面和更新质量，也方便回看该站点的全部收录。",
+        stats=[
+            ("来源", source_label(source)),
+            ("来源级别", source_trust_label(source)),
+            ("收录条数", str(len(all_items))),
+            ("数据库总条数", str(count_news_records())),
+        ],
+        main_html=main_html,
+        side_html=_shared_sidebar(
+            year_counts,
+            current_year,
+            recent_items,
+            _source_counts(recent_items),
+            f"/source/{source}",
+            active_source=source,
+        ),
+        year_counts=year_counts,
+        source_counts=source_counts if source_counts else _source_counts(recent_items),
+        current_year=current_year,
+        selected_year=current_year,
+        selected_source=source,
+        page_title=source_label(source),
     )
 
 
