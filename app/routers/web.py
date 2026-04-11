@@ -194,9 +194,10 @@ def _visible_years(year_counts: Dict[int, int], current_year: int, selected_year
 
 
 def _render_year_select(year_counts: Dict[int, int], current_year: int, selected_year: Optional[int]) -> str:
-    options = ['<option value="">近两年</option>']
-    for year in _visible_years(year_counts, current_year, selected_year):
-        selected = " selected" if year == selected_year else ""
+    effective_year = selected_year or current_year
+    options = []
+    for year in _visible_years(year_counts, current_year, effective_year):
+        selected = " selected" if year == effective_year else ""
         count_text = f" ({year_counts.get(year, 0)})" if year_counts.get(year, 0) else ""
         options.append(f"<option value='{year}'{selected}>{year}年{count_text}</option>")
     return "".join(options)
@@ -387,7 +388,7 @@ def _render_source_health_panel(items: Sequence) -> str:
             "<article class='health-card'>"
             f"<div class='health-head'><strong>{escape(row['source'])}</strong><span class='health-badge {escape(row['freshness_class'])}'>{escape(row['freshness'])}</span></div>"
             f"<div class='health-meta'>{escape(row['trust'])}</div>"
-            f"<div class='health-grid'><span>最近日期：{escape(row['latest'])}</span><span>近两年条数：{escape(row['count'])}</span></div>"
+            f"<div class='health-grid'><span>最近日期：{escape(row['latest'])}</span><span>收录条数：{escape(row['count'])}</span></div>"
             "</article>"
         )
     return (
@@ -400,8 +401,7 @@ def _render_source_health_panel(items: Sequence) -> str:
 
 def _render_nav(active_tab: str) -> str:
     tabs = [
-        ("latest", "/", "最新时政"),
-        ("today", "/today", "今日时政"),
+        ("today", "/", "今日时政"),
         ("yesterday", "/yesterday", "昨日时政"),
         ("archive", "/archive", "按月归档"),
         ("status", "/status", "同步状态"),
@@ -525,7 +525,7 @@ def _render_layout(
         }}
         .toolbar {{
           display: grid;
-          gap: 12px;
+          gap: 10px;
           margin-top: 16px;
         }}
         .search-form, .actions {{
@@ -550,8 +550,8 @@ def _render_layout(
         }}
         .toolbar-note {{
           color: var(--muted);
-          font-size: 14px;
-          line-height: 1.7;
+          font-size: 13px;
+          line-height: 1.6;
           padding-inline: 4px;
         }}
         .search-form select,
@@ -607,7 +607,7 @@ def _render_layout(
         }}
         .layout {{
           display: grid;
-          grid-template-columns: minmax(0, 1.55fr) minmax(320px, 0.95fr);
+          grid-template-columns: minmax(0, 1.72fr) minmax(280px, 0.82fr);
           gap: 18px;
           margin-top: 18px;
           align-items: start;
@@ -657,10 +657,10 @@ def _render_layout(
           scrollbar-color: rgba(35, 92, 121, 0.45) transparent;
         }}
         .scroll-shell.stream {{
-          max-height: min(64vh, 980px);
+          max-height: min(52vh, 760px);
         }}
         .scroll-shell.months {{
-          max-height: min(66vh, 1040px);
+          max-height: min(58vh, 860px);
         }}
         .scroll-shell::-webkit-scrollbar {{
           width: 8px;
@@ -1029,9 +1029,8 @@ def _render_layout(
               <input type="search" name="q" value="{escape(search_query)}" placeholder="搜索标题、正文或日期，例如 2025-03、2026-04-11" />
               <select name="year">{_render_year_select(year_counts, current_year, selected_year)}</select>
               <button type="submit">搜索</button>
-              <a class="ghost-link" href="/status">去同步页面</a>
             </form>
-            <div class="toolbar-note">统一搜索入口放在这里，支持关键词、日期和年份组合检索；来源筛选保留在右侧，减少重复按钮。</div>
+            <div class="toolbar-note">搜索只保留一个入口，默认按 {current_year} 年检索；要看同步情况，直接切到上方的同步状态页。</div>
           </div>
 
           <div class="stats">{stats_html}</div>
@@ -1092,18 +1091,12 @@ def _shared_sidebar(
 ) -> str:
     return (
         "<section class='panel'>"
-        "<div class='panel-head'><div><h2>来源筛选</h2><div class='panel-subtitle'>上线后用户最常见的动作之一，就是按来源快速缩小范围。</div></div></div>"
+        "<div class='panel-head'><div><h2>来源筛选</h2><div class='panel-subtitle'>这里保留一个最必要的辅助筛选，其余重复入口全部收掉。</div></div></div>"
         + _render_source_grid(source_counts, active_source, source_path, **source_params)
         + "</section>"
-        + "<section class='panel'>"
-        "<div class='panel-head'><div><h2>最近更新</h2><div class='panel-subtitle'>这里展示数据库里最新写入的时政内容。</div></div></div>"
-        + _render_recent_updates(recent_items, "当前还没有最近更新内容。")
-        + "</section>"
-        + _render_quality_panel()
     )
 
 
-@router.get("/", response_class=HTMLResponse)
 @router.get("/latest", response_class=HTMLResponse)
 async def latest_page(
     page: int = Query(default=1, ge=1),
@@ -1119,10 +1112,10 @@ async def latest_page(
 
     main_html = (
         "<section class='panel'>"
-        "<div class='panel-head'><div><h2>最新时政</h2><div class='panel-subtitle'>全部内容直接从数据库读取，按发布时间倒序展示。</div></div>"
+        "<div class='panel-head'><div><h2>全部时政</h2><div class='panel-subtitle'>这里保留完整浏览列表，按发布时间倒序展示。</div></div>"
         f"<span>{len(recent_items)} 条</span></div>"
         + _render_scroll_shell(
-            _render_news_stream(page_items, "数据库中还没有最近两年的时政内容，请先同步。")
+            _render_news_stream(page_items, "数据库中还没有可展示的时政内容，请先同步。")
         )
         + _render_pager("/", current_page, total_pages, source=source)
         + "</section>"
@@ -1138,25 +1131,27 @@ async def latest_page(
     )
     stats = [
         ("数据库总条数", str(count_news_records())),
-        ("最近两年条数", str(len(all_recent_items))),
+        ("当前列表条数", str(len(all_recent_items))),
         ("当前来源", source_label(source) if source else "全部来源"),
         ("最新发布日期", latest_date.strftime("%Y-%m-%d") if latest_date else "暂无数据"),
     ]
     return _render_layout(
-        active_tab="latest",
-        hero_title="最新时政",
-        hero_text="这里是最适合日常打开的主界面。所有内容直接从数据库读取，不再把多个视图堆在同一页里。",
+        active_tab="archive",
+        hero_title="全部时政",
+        hero_text="这里保留为完整浏览页，方便集中翻阅数据库内容，但日常默认首页已经切回今日时政。",
         stats=stats,
         main_html=main_html,
         side_html=side_html,
         year_counts=year_counts,
         source_counts=source_counts,
         current_year=current_year,
+        selected_year=current_year,
         selected_source=source,
-        page_title="最新时政",
+        page_title="全部时政",
     )
 
 
+@router.get("/", response_class=HTMLResponse)
 @router.get("/today", response_class=HTMLResponse)
 async def today_page(
     page: int = Query(default=1, ge=1),
@@ -1200,6 +1195,7 @@ async def today_page(
         year_counts=year_counts,
         source_counts=source_counts,
         current_year=current_year,
+        selected_year=current_year,
         selected_source=source,
         page_title="今日时政",
     )
@@ -1248,6 +1244,7 @@ async def yesterday_page(
         year_counts=year_counts,
         source_counts=source_counts,
         current_year=current_year,
+        selected_year=current_year,
         selected_source=source,
         page_title="昨日时政",
     )
@@ -1299,6 +1296,7 @@ async def archive_page(
         year_counts=year_counts,
         source_counts=source_counts,
         current_year=current_year,
+        selected_year=current_year,
         selected_source=source,
         page_title="按月归档",
     )
@@ -1326,7 +1324,7 @@ async def years_page():
             ("可查看年份", str(len(_visible_years(year_counts, current_year)))),
             ("最早年份", str(min(_visible_years(year_counts, current_year), default=current_year))),
             ("数据库总条数", str(count_news_records())),
-            ("最近两年条数", str(len(recent_items))),
+            ("已收录条数", str(len(recent_items))),
         ],
         main_html=main_html,
         side_html=_shared_sidebar(
@@ -1339,6 +1337,7 @@ async def years_page():
         year_counts=year_counts,
         source_counts=source_counts,
         current_year=current_year,
+        selected_year=current_year,
         page_title="按年份浏览",
     )
 
@@ -1402,24 +1401,22 @@ async def search_page(
 ):
     current_year = datetime.now(LOCAL_TZ).year
     keyword = (q or "").strip()
+    search_year = year or current_year
     items = []
     source_counts: Dict[str, int] = {}
     if keyword or year or source:
-        months = None if year else 24
-        raw_items, _ = query_news(year=year, search=keyword or None, months=months)
+        raw_items, _ = query_news(year=search_year, search=keyword or None, months=None)
         source_counts = _source_counts(raw_items)
         items = _filter_items_by_source(raw_items, source)
     year_counts = get_year_counts(min_year=MIN_FILTER_YEAR)
     recent_items, _ = query_news(year=None, search=None, months=24)
     page_items, current_page, total_pages = _paginate_sequence(items, page, ITEMS_PER_PAGE)
 
-    subtitle = "输入关键词后会直接在数据库里搜索标题、摘要、正文、来源和发布日期。"
-    if year and keyword:
-        subtitle = f"当前在 {year} 年范围内搜索关键词。"
-    elif year:
-        subtitle = f"当前直接查看 {year} 年范围内的内容。"
-    elif source and not keyword:
-        subtitle = f"当前只查看 {source_label(source)} 在近两年内的内容。"
+    subtitle = f"当前默认在 {search_year} 年范围内搜索标题、摘要、正文、来源和发布日期。"
+    if keyword:
+        subtitle = f"当前在 {search_year} 年范围内搜索关键词。"
+    elif source:
+        subtitle = f"当前只查看 {search_year} 年内来自 {source_label(source)} 的内容。"
     if source and keyword:
         subtitle += f" 当前来源筛选为 {source_label(source)}。"
 
@@ -1429,7 +1426,7 @@ async def search_page(
         + _render_scroll_shell(
             _render_news_stream(
                 page_items,
-                "输入关键词或选择年份后开始搜索。"
+                f"输入关键词后会默认搜索 {search_year} 年内容。"
                 if not (keyword or year or source)
                 else f"没有找到「{keyword or year or source_label(source)}」匹配的内容。",
                 keyword=keyword,
@@ -1468,7 +1465,7 @@ async def search_page(
         stats=[
             ("关键词", keyword or "未输入"),
             ("命中结果", str(len(items))),
-            ("年份限制", str(year) if year else "全部年份"),
+            ("年份限制", str(search_year)),
             ("当前来源", source_label(source) if source else "全部来源"),
         ],
         main_html=main_html,
@@ -1476,7 +1473,7 @@ async def search_page(
         year_counts=year_counts,
         source_counts=source_counts,
         current_year=current_year,
-        selected_year=year,
+        selected_year=search_year,
         selected_source=source,
         search_query=keyword,
         page_title="搜索",
@@ -1538,7 +1535,7 @@ async def news_detail_page(news_id: int):
     )
 
     return _render_layout(
-        active_tab="latest",
+        active_tab="archive",
         hero_title=item.title,
         hero_text="详情页让数据库内容真正变成可阅读的产品，而不只是一个跳板列表。",
         stats=[
@@ -1585,7 +1582,7 @@ async def status_page(sync_status: str = Query(default="")):
             ("当前状态", "进行中" if task_status["in_progress"] else "空闲"),
             ("最近同步", last_sync_at),
             ("数据库总条数", str(count_news_records())),
-            ("最近两年条数", str(len(recent_items))),
+            ("已收录条数", str(len(recent_items))),
         ],
         main_html=main_html,
         side_html=side_html,

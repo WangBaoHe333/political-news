@@ -10,18 +10,17 @@ def test_home_page(client):
     """测试首页访问"""
     response = client.get("/")
     assert response.status_code == 200
-    assert "最新时政" in response.text
     assert "今日时政" in response.text
     assert "同步状态" in response.text
-    assert "数据说明" in response.text
+    assert "只显示数据库里日期为今天的内容" in response.text
 
 
 def test_latest_page_alias(client):
     """测试最新时政别名页面"""
     response = client.get("/latest")
     assert response.status_code == 200
-    assert "最新时政" in response.text
-    assert "全部内容直接从数据库读取" in response.text
+    assert "全部时政" in response.text
+    assert "完整浏览列表" in response.text
 
 
 def test_archive_page(client):
@@ -45,7 +44,15 @@ def test_search_page_supports_year_only_filter(client):
     """测试只选择年份也能返回搜索结果页"""
     response = client.get("/search?year=2025")
     assert response.status_code == 200
-    assert "当前直接查看 2025 年范围内的内容。" in response.text
+    assert "当前默认在 2025 年范围内搜索标题、摘要、正文、来源和发布日期。" in response.text
+
+
+def test_search_defaults_to_current_year(client):
+    """测试搜索框默认选中当前年份"""
+    current_year = datetime.now(timezone.utc).year
+    response = client.get("/")
+    assert response.status_code == 200
+    assert f"<option value='{current_year}' selected>" in response.text
 
 
 def test_year_pages(client):
