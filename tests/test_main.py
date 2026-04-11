@@ -37,15 +37,22 @@ def test_search_page_with_filters_and_pagination(client):
     response = client.get("/search?q=%E6%B5%8B%E8%AF%95&year=2025&source=people_cn&page=1")
     assert response.status_code == 200
     assert "搜索结果" in response.text
-    assert "搜索数据库" in response.text
-    assert "全部来源" in response.text
+    assert "搜索" in response.text
+    assert "人民网" in response.text
+
+
+def test_search_page_supports_year_only_filter(client):
+    """测试只选择年份也能返回搜索结果页"""
+    response = client.get("/search?year=2025")
+    assert response.status_code == 200
+    assert "当前直接查看 2025 年范围内的内容。" in response.text
 
 
 def test_year_pages(client):
     """测试年份入口和年份详情页面"""
     response = client.get("/years")
     assert response.status_code == 200
-    assert "年份切换" in response.text
+    assert "按年份浏览" in response.text
     assert "2025" in response.text
 
     detail_response = client.get("/year/2025?page=1")
