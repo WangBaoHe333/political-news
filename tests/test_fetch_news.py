@@ -7,6 +7,7 @@ import pytest
 
 from app.fetch_news import (
     _extract_date,
+    _is_allowed_source_link,
     _normalize_text,
     _target_range,
     fetch_news,
@@ -34,6 +35,13 @@ def test_extract_date_english_month():
 def test_extract_date_invalid_or_empty():
     assert _extract_date("") is None
     assert _extract_date("无效日期无年份") is None
+
+
+def test_allowed_source_link_uses_whitelist():
+    assert _is_allowed_source_link("gov_cn", "https://www.gov.cn/yaowen/test.htm")
+    assert _is_allowed_source_link("xinhuanet", "https://www.news.cn/politics/test.htm")
+    assert not _is_allowed_source_link("gov_cn", "https://fake.example.com/test.htm")
+    assert not _is_allowed_source_link("sina", "https://news.sina.com.cn/test.htm")
 
 
 def test_target_range_year():
@@ -109,3 +117,28 @@ def test_fetch_news_progress_callback(mock_load, mock_fetch):
     fetch_news(months=1, max_items=5, max_pages=1, progress_callback=cb)
     assert len(progress) >= 1
     assert all("stage" in p for p in progress)
+
+
+@patch("app.fetch_news._fetch_url")
+@patch("app.fetch_news._load_json_feed")
+def test_fetch_news_discards_untrusted_domain(mock_load, mock_fetch):
+    article_html = """<html><body><div class="pages_content">
+    <p>这是一段足够长的正文内容用于摘要提取与单元测试。</p>
+    </div></body></html>"""
+
+    mock_fetch.return_value = article_html
+    mock_load.return_value = [
+        {
+            "source": "gov_cn",
+            "category": "时政",
+            "title": "异常来源测试",
+            "link": "https://example.com/not-official.htm",
+            "published": "2024-06-15",
+            "published_at": datetime(2024, 6, 15),
+            "summary": "",
+            "content": "",
+        }
+    ]
+
+    items = fetch_news(start_date=datetime(2024, 6, 1), end_date=datetime(2024, 6, 30, 23, 59, 59), max_items=10, max_pages=1)
+    assert items == []

@@ -17,6 +17,20 @@ SOURCE_LABELS = {
     "chinanews": "中国新闻网",
     "sina": "新浪新闻",
 }
+SOURCE_TRUST_LABELS = {
+    "gov_cn": "官方发布",
+    "people_cn": "央媒报道",
+    "xinhuanet": "央媒报道",
+    "chinanews": "主流媒体",
+    "sina": "转载来源",
+}
+SOURCE_TRUST_NOTES = {
+    "gov_cn": "国务院与政府系统公开发布内容，优先级最高。",
+    "people_cn": "人民网时政频道原文或 RSS，同步后保留原文链接。",
+    "xinhuanet": "新华网政治频道原文或 RSS，同步后保留原文链接。",
+    "chinanews": "中国新闻网中国频道原文或 RSS，同步后保留原文链接。",
+    "sina": "仅作历史兼容展示，新同步流程默认不再纳入。",
+}
 
 
 def _build_search_filter(query_text: str):
@@ -78,6 +92,18 @@ def source_label(source: Optional[str]) -> str:
     if not source:
         return "未知来源"
     return SOURCE_LABELS.get(source, source)
+
+
+def source_trust_label(source: Optional[str]) -> str:
+    if not source:
+        return "来源待确认"
+    return SOURCE_TRUST_LABELS.get(source, "来源待确认")
+
+
+def source_trust_note(source: Optional[str]) -> str:
+    if not source:
+        return "请以原文链接为准。"
+    return SOURCE_TRUST_NOTES.get(source, "请以原文链接为准。")
 
 
 def get_year_counts(min_year: Optional[int] = None) -> Dict[int, int]:

@@ -11,6 +11,7 @@ def test_home_page(client):
     assert "最新时政" in response.text
     assert "今日时政" in response.text
     assert "同步状态" in response.text
+    assert "数据说明" in response.text
 
 
 def test_latest_page_alias(client):

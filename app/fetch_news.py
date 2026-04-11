@@ -8,7 +8,7 @@ import ssl
 from datetime import datetime, timedelta, timezone
 from html import unescape
 from urllib.error import HTTPError, URLError
-from urllib.parse import urljoin
+from urllib.parse import urljoin, urlparse
 from urllib.request import Request, urlopen
 from xml.etree import ElementTree
 
@@ -52,14 +52,60 @@ CURATED_RSS_SOURCES = [
         "max_entries": 20,
     },
 ]
-SINA_NEWS_OPML_URL = os.getenv("SINA_NEWS_OPML_URL", "https://rss.sina.com.cn/sina_news_opml.xml")
-SINA_FEED_KEYWORDS = ("时政", "国内", "焦点", "要闻")
+TRUSTED_SOURCE_RULES = {
+    "gov_cn": {
+        "domains": ("gov.cn",),
+        "min_content_length": 18,
+    },
+    "people_cn": {
+        "domains": ("people.com.cn",),
+        "min_content_length": 18,
+    },
+    "xinhuanet": {
+        "domains": ("xinhuanet.com", "news.cn"),
+        "min_content_length": 18,
+    },
+    "chinanews": {
+        "domains": ("chinanews.com.cn",),
+        "min_content_length": 18,
+    },
+}
 
 
 def _normalize_text(value):
     value = unescape(value or "")
     value = re.sub(r"\s+", " ", value)
     return value.strip()
+
+
+def _hostname_matches(hostname, allowed_domains):
+    if not hostname:
+        return False
+    hostname = hostname.lower()
+    return any(hostname == domain or hostname.endswith(f".{domain}") for domain in allowed_domains)
+
+
+def _is_allowed_source_link(source, link):
+    rule = TRUSTED_SOURCE_RULES.get(source)
+    if not rule:
+        return False
+    parsed = urlparse(link)
+    return _hostname_matches(parsed.hostname, rule["domains"])
+
+
+def _is_reliable_item(item):
+    published_at = item.get("published_at")
+    if not published_at:
+        return False
+    if published_at > datetime.utcnow() + timedelta(days=1):
+        return False
+    if not _is_allowed_source_link(item.get("source"), item.get("link", "")):
+        return False
+
+    content = _normalize_text(item.get("content") or "")
+    summary = _normalize_text(item.get("summary") or "")
+    min_length = TRUSTED_SOURCE_RULES.get(item.get("source"), {}).get("min_content_length", 40)
+    return len(content) >= min_length or len(summary) >= min_length
 
 
 def _fetch_url(url):
@@ -259,6 +305,9 @@ def _parse_feed_entries(source_config, raw_xml):
         href = entry.get("link", "")
         if not title or not href:
             continue
+        full_link = urljoin(source_config.get("base_url", ""), href)
+        if not _is_allowed_source_link(source_config["source"], full_link):
+            continue
 
         published_text = (
             entry.get("published")
@@ -282,7 +331,7 @@ def _parse_feed_entries(source_config, raw_xml):
                 "source": source_config["source"],
                 "category": source_config.get("category", DEFAULT_CATEGORY),
                 "title": title,
-                "link": urljoin(source_config.get("base_url", ""), href),
+                "link": full_link,
                 "published": published_at.strftime("%Y-%m-%d") if published_at else _normalize_text(published_text),
                 "published_at": published_at,
                 "summary": summary,
@@ -292,41 +341,9 @@ def _parse_feed_entries(source_config, raw_xml):
     return items
 
 
-def _load_sina_source_configs():
-    try:
-        raw_opml = _fetch_url(SINA_NEWS_OPML_URL)
-        root = ElementTree.fromstring(raw_opml)
-    except (HTTPError, URLError, TimeoutError, OSError, ElementTree.ParseError) as exc:
-        logger.warning("Failed to load Sina OPML %s: %s", SINA_NEWS_OPML_URL, exc)
-        return []
-
-    configs = []
-    seen = set()
-    for outline in root.findall(".//outline"):
-        feed_url = outline.attrib.get("xmlUrl", "")
-        title = outline.attrib.get("title") or outline.attrib.get("text") or ""
-        if not feed_url or not title:
-            continue
-        if not any(keyword in title for keyword in SINA_FEED_KEYWORDS):
-            continue
-        if feed_url in seen:
-            continue
-        seen.add(feed_url)
-        configs.append(
-            {
-                "source": "sina",
-                "category": title,
-                "feed_url": feed_url,
-                "base_url": "https://news.sina.com.cn/",
-                "max_entries": 12,
-            }
-        )
-    return configs[:3]
-
-
 def _load_external_source_feeds(progress_callback=None):
     items = []
-    source_configs = CURATED_RSS_SOURCES + _load_sina_source_configs()
+    source_configs = CURATED_RSS_SOURCES
 
     for source_config in source_configs:
         try:
@@ -428,6 +445,8 @@ def fetch_news(year=None, months=12, max_pages=None, max_items=None, start_date=
     oldest_seen = None
 
     for item in page_items:
+        if not _is_allowed_source_link(item["source"], item["link"]):
+            continue
         published_at = item["published_at"]
         if not published_at:
             try:
@@ -462,6 +481,8 @@ def fetch_news(year=None, months=12, max_pages=None, max_items=None, start_date=
 
         item["summary"] = summary or item["title"]
         item["content"] = content or summary or item["title"]
+        if not _is_reliable_item(item):
+            continue
         collected.append(item)
 
     append_items(collected)
@@ -501,6 +522,8 @@ def fetch_news(year=None, months=12, max_pages=None, max_items=None, start_date=
             page_collected = []
             page_oldest = None
             for item in archive_items:
+                if not _is_allowed_source_link(item["source"], item["link"]):
+                    continue
                 published_at = item["published_at"]
                 if not published_at:
                     continue
@@ -524,6 +547,8 @@ def fetch_news(year=None, months=12, max_pages=None, max_items=None, start_date=
 
                 item["summary"] = summary or item["title"]
                 item["content"] = content or summary or item["title"]
+                if not _is_reliable_item(item):
+                    continue
                 page_collected.append(item)
 
             if progress_callback:

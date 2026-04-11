@@ -7,7 +7,7 @@ import json
 import math
 import re
 from typing import Dict, Iterable, List, Optional, Sequence, Tuple
-from urllib.parse import urlencode
+from urllib.parse import urlencode, urlparse
 from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, Query
@@ -22,6 +22,8 @@ from app.news_data import (
     latest_news_date,
     query_news,
     source_label,
+    source_trust_label,
+    source_trust_note,
     today_news,
     yesterday_news,
 )
@@ -33,6 +35,7 @@ LOCAL_TZ = ZoneInfo("Asia/Shanghai")
 MIN_FILTER_YEAR = 2025
 ITEMS_PER_PAGE = 12
 MONTHS_PER_PAGE = 4
+TRUSTED_SOURCE_ORDER = ("gov_cn", "people_cn", "xinhuanet", "chinanews")
 
 
 def _filter_items_by_source(items: Sequence, selected_source: Optional[str]) -> List:
@@ -58,6 +61,24 @@ def _highlight_text(text: str, keyword: Optional[str]) -> str:
     escaped_needle = escape(needle)
     pattern = re.compile(re.escape(escaped_needle), re.IGNORECASE)
     return pattern.sub(lambda match: f"<mark>{match.group(0)}</mark>", safe_text)
+
+
+def _source_hostname(link: str) -> str:
+    hostname = urlparse(link).hostname or ""
+    return hostname.removeprefix("www.")
+
+
+def _render_source_signature(item) -> str:
+    source = escape(source_label(item.source))
+    trust = escape(source_trust_label(item.source))
+    hostname = escape(_source_hostname(item.link))
+    return (
+        "<div class='meta-cluster'>"
+        f"<span class='meta-pill source'>{source}</span>"
+        f"<span class='meta-pill trust'>{trust}</span>"
+        f"<span class='meta-pill domain'>{hostname}</span>"
+        "</div>"
+    )
 
 
 def _paginate_sequence(items: Sequence, page: int, page_size: int) -> Tuple[Sequence, int, int]:
@@ -107,11 +128,11 @@ def _render_news_card(item, keyword: Optional[str] = None) -> str:
     title = _highlight_text(item.title, keyword)
     link = escape(item.link)
     published = escape(item.published or item.published_at.strftime("%Y-%m-%d"))
-    source = escape(source_label(item.source))
     excerpt = _highlight_text((item.summary or item.content or item.title or "")[:180], keyword)
     return (
         "<article class='news-card'>"
-        f"<div class='news-meta'><span>{published}</span><span>{source}</span></div>"
+        f"<div class='news-meta'><span>{published}</span><span>原文摘录</span></div>"
+        f"{_render_source_signature(item)}"
         f"<h4><a href='/news/{item.id}'>{title}</a></h4>"
         f"<p>{excerpt}</p>"
         "<div class='card-actions'>"
@@ -135,10 +156,9 @@ def _render_recent_updates(items, empty_text: str) -> str:
     blocks = []
     for item in items[:6]:
         published = escape(item.published or item.published_at.strftime("%Y-%m-%d"))
-        source = escape(source_label(item.source))
         blocks.append(
             "<article class='mini-card'>"
-            f"<div class='mini-date'>{published} · {source}</div>"
+            f"<div class='mini-date'>{published} · {escape(source_label(item.source))}</div>"
             f"<h4><a href='/news/{item.id}'>{escape(item.title)}</a></h4>"
             f"<p>{escape((item.summary or item.content or item.title or '')[:110])}</p>"
             "</article>"
@@ -296,6 +316,24 @@ def _render_article_body(item) -> str:
     if not paragraphs:
         paragraphs = [body_text]
     return "".join(f"<p>{escape(paragraph)}</p>" for paragraph in paragraphs)
+
+
+def _render_quality_panel() -> str:
+    chips = "".join(
+        f"<span class='helper-chip'>{escape(source_label(source))} · {escape(source_trust_label(source))}</span>"
+        for source in TRUSTED_SOURCE_ORDER
+    )
+    return (
+        "<section class='panel'>"
+        "<div class='panel-head'><div><h2>数据说明</h2><div class='panel-subtitle'>把可信度说清楚，比堆更多按钮更重要。</div></div></div>"
+        "<div class='helper-list'>"
+        "<div class='notice compact'><strong>白名单来源：</strong>当前只纳入中国政府网、人民网、新华网、中国新闻网。</div>"
+        "<div class='notice compact'><strong>同步规则：</strong>链接域名必须匹配来源白名单，日期异常或正文过短的内容会被过滤。</div>"
+        "<div class='notice compact'><strong>展示方式：</strong>站内只做原文摘录，不做 AI 改写，并始终保留原文链接。</div>"
+        f"<div class='source-reference'>{chips}</div>"
+        "</div>"
+        "</section>"
+    )
 
 
 def _render_nav(active_tab: str) -> str:
@@ -556,6 +594,35 @@ def _render_layout(
           margin-right: 10px;
           color: #97a5b2;
         }}
+        .meta-cluster {{
+          display: flex;
+          flex-wrap: wrap;
+          gap: 8px;
+          margin-bottom: 10px;
+        }}
+        .meta-pill {{
+          display: inline-flex;
+          align-items: center;
+          min-height: 28px;
+          padding: 5px 10px;
+          border-radius: 999px;
+          font-size: 12px;
+          font-weight: 700;
+          border: 1px solid rgba(35,43,51,0.08);
+          background: rgba(255,255,255,0.72);
+        }}
+        .meta-pill.source {{
+          color: var(--accent-2);
+          background: rgba(35,92,121,0.09);
+        }}
+        .meta-pill.trust {{
+          color: var(--accent);
+          background: rgba(160,50,45,0.1);
+        }}
+        .meta-pill.domain {{
+          color: #5e6972;
+          background: rgba(22,32,42,0.05);
+        }}
         .news-card h4, .mini-card h4 {{
           margin: 0 0 6px;
           line-height: 1.55;
@@ -756,6 +823,11 @@ def _render_layout(
           background: rgba(255,255,255,0.76);
           font-size: 14px;
         }}
+        .source-reference {{
+          display: flex;
+          flex-wrap: wrap;
+          gap: 10px;
+        }}
         .article-shell {{
           display: grid;
           gap: 18px;
@@ -880,6 +952,7 @@ def _shared_sidebar(
         "<div class='panel-head'><div><h2>最近更新</h2><div class='panel-subtitle'>这里展示数据库里最新写入的时政内容。</div></div></div>"
         + _render_recent_updates(recent_items, "当前还没有最近更新内容。")
         + "</section>"
+        + _render_quality_panel()
     )
 
 
@@ -1275,14 +1348,16 @@ async def news_detail_page(news_id: int):
         "<div class='article-meta-grid'>"
         f"<div class='sync-item'><strong>发布日期</strong><span>{escape(item.published or item.published_at.strftime('%Y-%m-%d'))}</span></div>"
         f"<div class='sync-item'><strong>来源</strong><span>{escape(source_label(item.source))}</span></div>"
+        f"<div class='sync-item'><strong>来源级别</strong><span>{escape(source_trust_label(item.source))}</span></div>"
         f"<div class='sync-item'><strong>年份</strong><span>{item.year} 年</span></div>"
-        f"<div class='sync-item'><strong>月份</strong><span>{item.month} 月</span></div>"
+        f"<div class='sync-item'><strong>来源域名</strong><span>{escape(_source_hostname(item.link))}</span></div>"
         "</div>"
         "<div class='actions'>"
         f"<a class='ghost-link' href='{escape(item.link)}' target='_blank' rel='noreferrer'>查看原文</a>"
         f"<a class='ghost-link' href='{_build_href(f'/year/{item.year}', source=item.source)}'>查看同年同来源</a>"
         "</div>"
         f"<div class='notice'><strong>摘要：</strong>{escape(item.summary or '暂无摘要')}</div>"
+        f"<div class='notice'><strong>可信说明：</strong>{escape(source_trust_note(item.source))}</div>"
         f"<div class='article-body'>{_render_article_body(item)}</div>"
         "</section>"
     )
