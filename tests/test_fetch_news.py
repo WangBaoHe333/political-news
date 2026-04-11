@@ -1,192 +1,111 @@
-"""测试新闻抓取模块"""
+"""测试新闻抓取模块（与 app.fetch_news 实现对齐）。"""
+
+from datetime import datetime
+from unittest.mock import patch
 
 import pytest
-from datetime import datetime, timedelta
-from unittest.mock import Mock, patch, AsyncMock
-import feedparser
 
 from app.fetch_news import (
+    _extract_date,
+    _normalize_text,
+    _target_range,
     fetch_news,
-    parse_news_item,
-    fetch_json_news,
-    fetch_archive_news,
-    _fetch_page,
-    _parse_date,
 )
 
 
-def test_parse_date():
-    """测试日期解析"""
-    # 测试各种日期格式
-    assert _parse_date("2024-01-15") == datetime(2024, 1, 15)
-    assert _parse_date("2024年01月15日") == datetime(2024, 1, 15)
-    assert _parse_date("2024/01/15") == datetime(2024, 1, 15)
-    assert _parse_date("15 Jan 2024") == datetime(2024, 1, 15)
-
-    # 测试无效日期
-    assert _parse_date("无效日期") is None
-    assert _parse_date("") is None
+def test_normalize_text():
+    assert _normalize_text("  a  \n  b  ") == "a b"
+    assert _normalize_text("") == ""
 
 
-def test_parse_news_item():
-    """测试新闻条目解析"""
-    # 正常条目
-    item = {
-        "title": "测试标题",
-        "link": "https://example.com/test",
-        "published": "2024-01-15",
-        "summary": "测试摘要",
-    }
-
-    parsed = parse_news_item(item)
-    assert parsed["title"] == "测试标题"
-    assert parsed["link"] == "https://example.com/test"
-    assert parsed["published"] == "2024-01-15"
-    assert parsed["summary"] == "测试摘要"
-    assert parsed["year"] == 2024
-    assert parsed["month"] == 1
-
-    # 缺少字段的条目
-    incomplete_item = {"title": "标题"}
-    parsed = parse_news_item(incomplete_item)
-    assert parsed["title"] == "标题"
-    assert parsed["link"] == ""
-    assert parsed["published"] == ""
-    assert parsed["summary"] == ""
+def test_extract_date_iso_and_slash():
+    assert _extract_date("2024-01-15") == datetime(2024, 1, 15)
+    assert _extract_date("2024/01/15") == datetime(2024, 1, 15)
 
 
-@patch("app.fetch_news.requests.get")
-def test_fetch_page_success(mock_get):
-    """测试成功获取页面"""
-    mock_response = Mock()
-    mock_response.status_code = 200
-    mock_response.text = "<html>测试内容</html>"
-    mock_get.return_value = mock_response
-
-    content = _fetch_page("https://example.com")
-    assert content == "<html>测试内容</html>"
-    mock_get.assert_called_once_with("https://example.com", timeout=30)
+def test_extract_date_chinese():
+    assert _extract_date("2024年01月15日") == datetime(2024, 1, 15)
 
 
-@patch("app.fetch_news.requests.get")
-def test_fetch_page_failure(mock_get):
-    """测试获取页面失败"""
-    mock_response = Mock()
-    mock_response.status_code = 404
-    mock_get.return_value = mock_response
-
-    content = _fetch_page("https://example.com")
-    assert content == ""
-    mock_get.assert_called_once_with("https://example.com", timeout=30)
+def test_extract_date_english_month():
+    assert _extract_date("15 Jan 2024") == datetime(2024, 1, 15)
 
 
-@patch("app.fetch_news._fetch_page")
-@patch("app.fetch_news.feedparser.parse")
-def test_fetch_json_news(mock_parse, mock_fetch):
-    """测试JSON新闻获取"""
-    # 模拟RSS响应
-    mock_feed = Mock()
-    mock_feed.entries = [
+def test_extract_date_invalid_or_empty():
+    assert _extract_date("") is None
+    assert _extract_date("无效日期无年份") is None
+
+
+def test_target_range_year():
+    start, end = _target_range(year=2024)
+    assert start == datetime(2024, 1, 1)
+    assert end.year == 2024 and end.month == 12
+
+
+def test_target_range_explicit_dates():
+    a = datetime(2024, 6, 1)
+    b = datetime(2024, 6, 30, 23, 59, 59)
+    start, end = _target_range(start_date=a, end_date=b)
+    assert start == a and end == b
+
+
+@patch("app.fetch_news._fetch_url")
+@patch("app.fetch_news._load_json_feed")
+def test_fetch_news_respects_range_and_article_fetch(mock_load, mock_fetch):
+    """JSON 列表与详情页均由 mock 提供，不访问外网。"""
+    article_html = """<html><body><div class="pages_content">
+    <p>这是一段足够长的正文内容用于摘要提取与单元测试。</p>
+    </div></body></html>"""
+
+    def fetch_side_effect(url: str) -> str:
+        if "home_" in url:
+            return "<html><body></body></html>"
+        return article_html
+
+    mock_fetch.side_effect = fetch_side_effect
+    mock_load.return_value = [
         {
-            "title": "新闻1",
-            "link": "https://example.com/1",
-            "published": "2024-01-15",
-            "summary": "摘要1",
-        },
-        {
-            "title": "新闻2",
-            "link": "https://example.com/2",
-            "published": "2024-01-16",
-            "summary": "摘要2",
-        },
-    ]
-    mock_parse.return_value = mock_feed
-    mock_fetch.return_value = "<rss>data</rss>"
-
-    items = fetch_json_news()
-    assert len(items) == 2
-    assert items[0]["title"] == "新闻1"
-    assert items[1]["title"] == "新闻2"
-
-
-@patch("app.fetch_news._fetch_page")
-def test_fetch_archive_news(mock_fetch):
-    """测试归档新闻获取"""
-    # 模拟HTML响应
-    mock_html = """
-    <html>
-    <div class="news_list">
-        <li>
-            <a href="/test1">标题1</a>
-            <span class="date">2024-01-15</span>
-        </li>
-        <li>
-            <a href="/test2">标题2</a>
-            <span class="date">2024-01-16</span>
-        </li>
-    </div>
-    </html>
-    """
-    mock_fetch.return_value = mock_html
-
-    items = fetch_archive_news(1, datetime(2024, 1, 1), datetime(2024, 1, 31))
-    assert len(items) == 2
-    assert items[0]["title"] == "标题1"
-    assert items[0]["link"] == "https://www.gov.cn/test1"
-    assert items[1]["title"] == "标题2"
-
-
-@patch("app.fetch_news.fetch_json_news")
-@patch("app.fetch_news.fetch_archive_news")
-def test_fetch_news_with_filters(mock_archive, mock_json):
-    """测试带过滤条件的新闻抓取"""
-    # 模拟返回数据
-    mock_json.return_value = [
-        {"title": "新闻1", "published": "2024-01-15", "year": 2024, "month": 1},
-        {"title": "新闻2", "published": "2024-02-15", "year": 2024, "month": 2},
+            "source": "gov_cn",
+            "category": "时政",
+            "title": "测试时政标题",
+            "link": "https://www.gov.cn/yaowen/content_test.htm",
+            "published": "2024-06-15",
+            "published_at": datetime(2024, 6, 15),
+            "summary": "",
+            "content": "",
+        }
     ]
 
-    mock_archive.return_value = [
-        {"title": "归档1", "published": "2023-12-15", "year": 2023, "month": 12},
-    ]
+    start = datetime(2024, 6, 1)
+    end = datetime(2024, 6, 30, 23, 59, 59)
+    items = fetch_news(start_date=start, end_date=end, max_items=10, max_pages=1)
 
-    # 测试年份过滤
-    items = fetch_news(year=2024)
-    assert len(items) == 2
-
-    # 测试日期范围过滤
-    start_date = datetime(2024, 1, 1)
-    end_date = datetime(2024, 1, 31)
-    items = fetch_news(start_date=start_date, end_date=end_date)
-    # 应该只包含1月份的新闻
-    assert len([i for i in items if i["month"] == 1]) >= 1
+    assert len(items) == 1
+    assert items[0]["title"] == "测试时政标题"
+    assert "正文" in (items[0].get("summary") or "")
+    assert items[0]["published_at"].year == 2024
 
 
-def test_fetch_news_progress_callback():
-    """测试进度回调"""
-    progress_data = []
-
-    def progress_callback(info):
-        progress_data.append(info)
-
-    with patch("app.fetch_news.fetch_json_news", return_value=[]), \
-         patch("app.fetch_news.fetch_archive_news", return_value=[]):
-
-        fetch_news(months=1, progress_callback=progress_callback)
-
-        # 应该至少调用一次进度回调
-        assert len(progress_data) > 0
-        assert "stage" in progress_data[0]
+@patch("app.fetch_news._fetch_url")
+@patch("app.fetch_news._load_json_feed")
+def test_fetch_news_empty_feed(mock_load, mock_fetch):
+    mock_load.return_value = []
+    mock_fetch.return_value = "<html></html>"
+    items = fetch_news(months=1, max_items=10, max_pages=1)
+    assert items == []
 
 
-@patch("app.fetch_news._fetch_page")
-def test_fetch_news_empty_response(mock_fetch):
-    """测试空响应处理"""
+@patch("app.fetch_news._fetch_url")
+@patch("app.fetch_news._load_json_feed")
+def test_fetch_news_progress_callback(mock_load, mock_fetch):
+    mock_load.return_value = []
     mock_fetch.return_value = ""
 
-    items = fetch_news(months=1, max_items=10)
-    assert len(items) == 0
+    progress: list = []
 
+    def cb(info):
+        progress.append(info)
 
-if __name__ == "__main__":
-    pytest.main([__file__, "-v"])
+    fetch_news(months=1, max_items=5, max_pages=1, progress_callback=cb)
+    assert len(progress) >= 1
+    assert all("stage" in p for p in progress)

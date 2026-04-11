@@ -82,9 +82,9 @@ init_server() {
     log_info "服务器环境初始化完成！"
 }
 
-# 部署应用
+# 部署应用（开发环境）
 deploy_app() {
-    log_info "开始部署时政系统..."
+    log_info "开始部署时政系统（开发环境）..."
 
     # 进入项目目录
     cd /opt/political-news || {
@@ -110,7 +110,7 @@ deploy_app() {
     fi
 
     # 构建并启动服务
-    log_info "启动Docker服务..."
+    log_info "启动Docker服务（开发环境）..."
     docker-compose down
     docker-compose build --no-cache
     docker-compose up -d
@@ -131,6 +131,89 @@ deploy_app() {
     fi
 
     log_info "部署完成！"
+}
+
+# 部署生产环境
+deploy_prod() {
+    log_info "开始部署时政系统（生产环境）..."
+
+    # 进入项目目录
+    cd /opt/political-news || {
+        log_error "项目目录不存在，请先运行 init"
+        exit 1
+    }
+
+    # 克隆或更新代码
+    if [ -d ".git" ]; then
+        log_info "更新代码..."
+        git pull origin main
+    else
+        log_info "克隆代码..."
+        git clone https://github.com/WangBaoHe333/political-news.git .
+    fi
+
+    # 检查生产环境变量文件
+    if [ ! -f ".env.production" ]; then
+        log_warn "未找到 .env.production 文件，从示例文件创建..."
+        cp .env.example .env.production
+        log_warn "请编辑 .env.production 文件，设置生产环境变量"
+        log_warn "特别注意：POSTGRES_PASSWORD, OPENAI_API_KEY 等敏感配置"
+        nano .env.production || vim .env.production || vi .env.production
+    fi
+
+    # 检查SSL证书
+    if [ ! -f "ssl/fullchain.pem" ] || [ ! -f "ssl/privkey.pem" ]; then
+        log_warn "未找到SSL证书，将使用自签名证书（仅测试用）..."
+        mkdir -p ssl
+        openssl req -x509 -nodes -days 365 -newkey rsa:2048 \
+            -keyout ssl/privkey.pem \
+            -out ssl/fullchain.pem \
+            -subj "/C=CN/ST=Beijing/L=Beijing/O=Political News/CN=39.104.27.129" 2>/dev/null || {
+            log_error "生成自签名证书失败"
+            exit 1
+        }
+        log_warn "生产环境建议使用Let's Encrypt证书，详情见 ssl/README.md"
+    fi
+
+    # 停止现有服务
+    log_info "停止现有服务..."
+    docker-compose -f docker-compose.yml -f docker-compose.prod.yml down
+
+    # 构建并启动生产服务
+    log_info "启动Docker生产服务..."
+    docker-compose -f docker-compose.yml -f docker-compose.prod.yml build --no-cache
+    docker-compose -f docker-compose.yml -f docker-compose.prod.yml up -d
+
+    # 等待服务启动
+    log_info "等待服务启动..."
+    sleep 15
+
+    # 检查服务状态
+    if docker-compose -f docker-compose.yml -f docker-compose.prod.yml ps | grep -q "Up"; then
+        log_info "生产服务启动成功！"
+        log_info "应用地址: https://39.104.27.129"
+        log_info "HTTP重定向地址: http://39.104.27.129 (自动跳转HTTPS)"
+        log_info "API文档: https://39.104.27.129/docs"
+
+        # 测试HTTPS访问
+        log_info "测试HTTPS连接..."
+        if curl -k -s -f https://localhost/health > /dev/null; then
+            log_info "HTTPS连接测试成功"
+        else
+            log_warn "HTTPS连接测试失败，请检查Nginx配置"
+        fi
+    else
+        log_error "生产服务启动失败，请查看日志"
+        docker-compose -f docker-compose.yml -f docker-compose.prod.yml logs
+        exit 1
+    fi
+
+    log_info "生产环境部署完成！"
+    log_info "建议："
+    log_info "1. 配置防火墙: sudo ufw allow 80,443"
+    log_info "2. 设置SSL证书续期（如果使用Let's Encrypt）"
+    log_info "3. 配置监控和备份"
+    log_info "详情请查看项目文档"
 }
 
 # 更新应用

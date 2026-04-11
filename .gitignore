@@ -6,8 +6,10 @@ __pycache__
 .Python
 *.so
 
-# 环境
+# 环境（保留 .env.example 供版本库跟踪）
 .env
+.env.*
+!.env.example
 .venv
 env/
 venv/
@@ -33,6 +35,7 @@ logs/
 
 # 测试
 .coverage
+coverage.xml
 htmlcov/
 .pytest_cache/
 .mypy_cache/

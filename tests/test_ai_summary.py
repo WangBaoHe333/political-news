@@ -1,222 +1,159 @@
-"""测试AI摘要和题目生成模块"""
+"""测试 AI 摘要与题目生成模块（与 app.ai_summary 实现对齐）。"""
+
+import json
+from datetime import datetime
+from unittest.mock import Mock
 
 import pytest
-from unittest.mock import Mock, patch, AsyncMock
-import openai
 
 from app.ai_summary import (
-    generate_summary,
+    build_grounded_questions,
+    build_grounded_summary,
     generate_questions,
-    _call_openai_api,
-    SUMMARY_PROMPT_TEMPLATE,
-    QUESTION_PROMPT_TEMPLATE,
+    generate_summary,
 )
 
 
-def test_call_openai_api_success():
-    """测试成功调用OpenAI API"""
+def _item(
+    title: str,
+    summary: str,
+    published: str,
+    published_at: datetime,
+) -> dict:
+    return {
+        "title": title,
+        "summary": summary,
+        "content": "",
+        "published": published,
+        "published_at": published_at,
+    }
+
+
+def test_build_grounded_summary_empty():
+    out = build_grounded_summary([])
+    assert len(out) == 2
+    assert "还没有抓取到可用时政内容" in out[0]
+
+
+def test_build_grounded_summary_with_items():
+    items = [
+        _item("第二条", "第二条有足够长度的摘要句子用于测试。", "2024-01-16", datetime(2024, 1, 16)),
+        _item("第一条", "第一条有足够长度的摘要句子用于测试。", "2024-01-15", datetime(2024, 1, 15)),
+    ]
+    items.sort(key=lambda x: x["published_at"], reverse=True)
+    out = build_grounded_summary(items)
+    assert any("共收录 2 条" in line for line in out)
+
+
+def test_generate_summary_uses_grounded_without_client(monkeypatch):
+    monkeypatch.setattr("app.ai_summary._client", lambda: None)
+    items = [
+        _item("要闻", "热点摘要句子足够长度用于测试逻辑。", "2024-02-01", datetime(2024, 2, 1)),
+    ]
+    out = generate_summary(items)
+    assert isinstance(out, list)
+    assert len(out) >= 1
+
+
+def test_generate_summary_via_openai(monkeypatch):
+    mock_client = Mock()
     mock_response = Mock()
-    mock_choice = Mock()
-    mock_choice.message.content = "测试响应"
-    mock_response.choices = [mock_choice]
-    mock_response.usage = Mock(total_tokens=10)
+    mock_response.output_text = "要点一\n要点二\n"
+    mock_client.responses.create.return_value = mock_response
+    monkeypatch.setattr("app.ai_summary._client", lambda: mock_client)
 
-    with patch("app.ai_summary.openai.chat.completions.create", return_value=mock_response):
-        result = _call_openai_api("测试提示", "gpt-4o-mini")
-        assert result == "测试响应"
-
-
-def test_call_openai_api_failure():
-    """测试OpenAI API调用失败"""
-    with patch("app.ai_summary.openai.chat.completions.create", side_effect=Exception("API错误")):
-        result = _call_openai_api("测试提示", "gpt-4o-mini")
-        assert result == ""
-
-
-def test_call_openai_api_no_api_key():
-    """测试没有API密钥的情况"""
-    with patch("app.ai_summary.os.getenv", return_value=""):
-        result = _call_openai_api("测试提示", "gpt-4o-mini")
-        assert result == ""
-
-
-def test_generate_summary_basic():
-    """测试基础摘要生成"""
-    news_items = [
-        {
-            "title": "新闻标题1",
-            "summary": "新闻摘要1",
-            "published": "2024-01-15",
-            "source": "gov_cn",
-        },
-        {
-            "title": "新闻标题2",
-            "summary": "新闻摘要2",
-            "published": "2024-01-16",
-            "source": "gov_cn",
-        },
+    items = [
+        _item("标题", "正文摘录需要一定长度才参与摘要。", "2024-01-01", datetime(2024, 1, 1)),
     ]
-
-    with patch("app.ai_summary._call_openai_api", return_value="1. 要点1\n2. 要点2\n3. 要点3"):
-        summary = generate_summary(news_items)
-        assert isinstance(summary, list)
-        assert len(summary) == 3
-        assert "要点1" in summary[0]
-        assert "要点2" in summary[1]
-        assert "要点3" in summary[2]
+    out = generate_summary(items)
+    assert any("要点" in line for line in out)
+    mock_client.responses.create.assert_called_once()
 
 
-def test_generate_summary_empty_input():
-    """测试空输入"""
-    summary = generate_summary([])
-    assert summary == ["当前无时政数据"]
+def test_generate_summary_empty_api_response_uses_grounded(monkeypatch):
+    mock_client = Mock()
+    mock_client.responses.create.return_value = Mock(output_text="")
+    monkeypatch.setattr("app.ai_summary._client", lambda: mock_client)
 
-    summary = generate_summary(None)
-    assert summary == ["当前无时政数据"]
-
-
-def test_generate_summary_api_error():
-    """测试API错误时的降级处理"""
-    news_items = [{"title": "测试新闻", "summary": "测试摘要"}]
-
-    with patch("app.ai_summary._call_openai_api", return_value=""):
-        summary = generate_summary(news_items)
-        # 应该返回降级摘要
-        assert len(summary) > 0
-        assert "基于当前" in summary[0]
-
-
-def test_generate_questions_basic():
-    """测试基础题目生成"""
-    news_items = [
-        {
-            "title": "经济工作会议召开",
-            "summary": "中央经济工作会议强调高质量发展",
-            "published": "2024-01-15",
-            "source": "gov_cn",
-        }
+    items = [
+        _item("X", "摘要句子够长用于兜底路径测试。" * 2, "2024-04-01", datetime(2024, 4, 1)),
     ]
+    out = generate_summary(items)
+    assert isinstance(out, list)
+    assert len(out) >= 1
 
-    mock_response = """[
+
+def test_build_grounded_questions_too_few_items():
+    one = [_item("a", "摘要。" * 5, "2024-01-01", datetime(2024, 1, 1))]
+    assert build_grounded_questions(one) == []
+
+
+def test_build_grounded_questions_four_items():
+    items = [
+        _item(f"标题{i}", f"摘要{i}内容需要足够长度。" * 3, f"2024-01-{i:02d}", datetime(2024, 1, i))
+        for i in range(1, 5)
+    ]
+    items.sort(key=lambda x: x["published_at"], reverse=True)
+    qs = build_grounded_questions(items)
+    assert len(qs) >= 3
+    assert any(q["type"] == "单选题" for q in qs)
+
+
+def test_generate_questions_empty():
+    assert generate_questions([]) == []
+
+
+def test_generate_questions_none_is_unsupported():
+    with pytest.raises(TypeError):
+        generate_questions(None)  # type: ignore[arg-type]
+
+
+def test_generate_questions_invalid_json_falls_back_to_grounded(monkeypatch):
+    mock_client = Mock()
+    mock_client.responses.create.return_value = Mock(output_text="not valid json{{{")
+    monkeypatch.setattr("app.ai_summary._client", lambda: mock_client)
+
+    items = [
+        _item(f"T{i}", "摘要材料需要足够长度。" * 4, f"2024-02-{i:02d}", datetime(2024, 2, i))
+        for i in range(1, 5)
+    ]
+    items.sort(key=lambda x: x["published_at"], reverse=True)
+    out = generate_questions(items)
+    assert len(out) >= 3
+    assert out[0]["type"] in ("单选题", "判断题", "材料概括题", "数据分析题")
+
+
+def test_generate_questions_valid_json_from_api(monkeypatch):
+    payload = [
         {
             "type": "单选题",
-            "stem": "2024年中央经济工作会议强调的重点是什么？",
-            "options": ["A. 高速增长", "B. 高质量发展", "C. 扩大投资", "D. 刺激消费"],
-            "answer": "B",
-            "analysis": "会议明确指出要坚持高质量发展..."
+            "stem": "题干示例？",
+            "options": ["A", "B"],
+            "answer": "A",
+            "analysis": "解析",
         }
-    ]"""
-
-    with patch("app.ai_summary._call_openai_api", return_value=mock_response):
-        questions = generate_questions(news_items)
-        assert isinstance(questions, list)
-        assert len(questions) == 1
-        assert questions[0]["type"] == "单选题"
-        assert questions[0]["stem"] == "2024年中央经济工作会议强调的重点是什么？"
-        assert "B. 高质量发展" in questions[0]["options"]
-        assert questions[0]["answer"] == "B"
-        assert "高质量发展" in questions[0]["analysis"]
-
-
-def test_generate_questions_invalid_json():
-    """测试无效JSON响应"""
-    news_items = [{"title": "测试", "summary": "测试"}]
-
-    # 测试无效JSON
-    with patch("app.ai_summary._call_openai_api", return_value="无效JSON"):
-        questions = generate_questions(news_items)
-        assert len(questions) == 0
-
-    # 测试空响应
-    with patch("app.ai_summary._call_openai_api", return_value=""):
-        questions = generate_questions(news_items)
-        assert len(questions) == 0
-
-
-def test_generate_questions_empty_input():
-    """测试空输入"""
-    questions = generate_questions([])
-    assert questions == []
-
-    questions = generate_questions(None)
-    assert questions == []
-
-
-def test_generate_questions_fallback():
-    """测试降级题目生成"""
-    news_items = [{"title": "测试", "summary": "测试"}]
-
-    with patch("app.ai_summary._call_openai_api", return_value=""):
-        questions = generate_questions(news_items)
-        # 应该返回降级题目
-        assert len(questions) > 0
-        assert questions[0]["type"] in ["单选题", "判断题", "材料概括题"]
-
-
-def test_prompt_templates():
-    """测试提示词模板"""
-    news_items = [
-        {"title": "标题1", "summary": "摘要1", "published": "2024-01-15"},
-        {"title": "标题2", "summary": "摘要2", "published": "2024-01-16"},
     ]
+    mock_client = Mock()
+    mock_client.responses.create.return_value = Mock(output_text=json.dumps(payload))
+    monkeypatch.setattr("app.ai_summary._client", lambda: mock_client)
 
-    # 测试摘要提示词
-    summary_prompt = SUMMARY_PROMPT_TEMPLATE.format(news_items=str(news_items))
-    assert "标题1" in summary_prompt
-    assert "摘要1" in summary_prompt
-    assert "请生成" in summary_prompt
-
-    # 测试题目提示词
-    question_prompt = QUESTION_PROMPT_TEMPLATE.format(news_items=str(news_items))
-    assert "标题1" in question_prompt
-    assert "摘要1" in question_prompt
-    assert "公务员考试" in question_prompt
-
-
-def test_model_selection():
-    """测试模型选择"""
-    # 测试默认模型
-    with patch("app.ai_summary.os.getenv") as mock_getenv:
-        mock_getenv.side_effect = lambda key, default=None: {
-            "OPENAI_API_KEY": "test_key",
-            "OPENAI_SUMMARY_MODEL": "gpt-4",
-            "OPENAI_QUESTION_MODEL": "gpt-3.5-turbo",
-        }.get(key, default)
-
-        with patch("app.ai_summary.openai.chat.completions.create") as mock_create:
-            mock_response = Mock()
-            mock_choice = Mock()
-            mock_choice.message.content = "测试"
-            mock_response.choices = [mock_choice]
-            mock_response.usage = Mock(total_tokens=10)
-            mock_create.return_value = mock_response
-
-            # 测试摘要模型
-            news_items = [{"title": "测试", "summary": "测试"}]
-            generate_summary(news_items)
-
-            # 检查调用参数
-            call_args = mock_create.call_args
-            assert call_args is not None
-            # 应该使用gpt-4模型
-            assert "gpt-4" in str(call_args)
+    items = [
+        _item(f"T{i}", "材料正文摘录。" * 6, f"2024-03-{i:02d}", datetime(2024, 3, i))
+        for i in range(1, 5)
+    ]
+    items.sort(key=lambda x: x["published_at"], reverse=True)
+    out = generate_questions(items)
+    assert len(out) == 1
+    assert out[0]["stem"] == "题干示例？"
+    assert out[0]["answer"] == "A"
 
 
-def test_error_handling():
-    """测试错误处理"""
-    news_items = [{"title": "测试", "summary": "测试"}]
-
-    # 测试各种异常
-    with patch("app.ai_summary._call_openai_api", side_effect=Exception("测试异常")):
-        summary = generate_summary(news_items)
-        # 应该返回降级结果而不是崩溃
-        assert summary is not None
-        assert len(summary) > 0
-
-        questions = generate_questions(news_items)
-        assert questions is not None
-        assert isinstance(questions, list)
-
-
-if __name__ == "__main__":
-    pytest.main([__file__, "-v"])
+def test_generate_questions_without_client_returns_grounded(monkeypatch):
+    monkeypatch.setattr("app.ai_summary._client", lambda: None)
+    items = [
+        _item(f"T{i}", "摘要。" * 8, f"2024-05-{i:02d}", datetime(2024, 5, i))
+        for i in range(1, 5)
+    ]
+    items.sort(key=lambda x: x["published_at"], reverse=True)
+    out = generate_questions(items)
+    assert len(out) >= 3

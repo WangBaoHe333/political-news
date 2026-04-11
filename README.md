@@ -118,6 +118,13 @@ LIST_JSON_URL=https://www.gov.cn/yaowen/liebiao/YAOWENLIEBIAO.json
 - `GET /api/news/grouped-by-month` - 按月分组获取新闻
 - `GET /api/news/past-two-years` - 获取过去两年时政内容
 
+### AI 输出 API（与首页同源逻辑）
+- `GET /api/ai/summary` - 获取当前筛选范围内的 AI 要点总结（可选 `year` 查询参数，与 `/api/news` 一致）
+- `GET /api/ai/questions` - 获取公考风格练习题 JSON（可选 `year`）
+
+### 运维
+- `GET /health` - 健康检查（JSON，含 `status` 与 `timestamp`）
+
 ### 同步管理API
 - `GET /sync` - 手动触发同步
 - `GET /sync-status` - 获取同步状态

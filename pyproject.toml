@@ -146,3 +146,6 @@ exclude_lines = [
 
 [project.scripts]
 political-news = "app.main:app"
+
+[tool.setuptools.packages.find]
+include = ["app"]

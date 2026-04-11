@@ -9,26 +9,17 @@ from sqlalchemy import create_engine
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from app.main import app
-from app.database import SessionLocal, init_db, engine
 from app.models import Base
 
 
 @pytest.fixture(scope="session")
 def test_db():
-    """创建测试数据库"""
-    # 使用内存SQLite数据库进行测试
-    test_db_url = "sqlite:///:memory:"
-
-    # 创建测试引擎
-    test_engine = create_engine(test_db_url)
-
-    # 创建所有表
+    """创建测试数据库（会话结束时释放引擎，避免未关闭连接告警）。"""
+    test_engine = create_engine("sqlite:///:memory:")
     Base.metadata.create_all(bind=test_engine)
-
-    # 创建测试会话
     TestingSessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=test_engine)
-
-    return TestingSessionLocal
+    yield TestingSessionLocal
+    test_engine.dispose()
 
 
 @pytest.fixture

@@ -3,6 +3,8 @@ import os
 import re
 import json
 import time
+import random
+import ssl
 from datetime import datetime, timedelta, timezone
 from html import unescape
 from urllib.error import HTTPError, URLError
@@ -35,16 +37,23 @@ def _normalize_text(value):
 
 def _fetch_url(url):
     last_error = None
+    # 创建不验证SSL证书的上下文
+    context = ssl._create_unverified_context()
     for attempt in range(HTTP_RETRIES + 1):
         try:
             request = Request(url, headers={"User-Agent": "political-news/1.0"})
-            with urlopen(request, timeout=HTTP_TIMEOUT) as response:
+            with urlopen(request, timeout=HTTP_TIMEOUT, context=context) as response:
                 return response.read().decode("utf-8", errors="ignore")
         except (HTTPError, URLError, TimeoutError, OSError) as exc:
             last_error = exc
             if attempt >= HTTP_RETRIES:
+                logger.warning("Failed to fetch %s after %d attempts: %s", url, attempt + 1, exc)
                 raise
-            time.sleep(1.5 * (attempt + 1))
+            # 指数退避 + 随机抖动
+            base_delay = 1.5
+            delay = base_delay * (2 ** attempt) + random.uniform(0, base_delay * 0.1)
+            logger.info("Retry %d for %s after %.2f seconds: %s", attempt + 1, url, delay, exc)
+            time.sleep(delay)
     raise last_error
 
 
@@ -53,16 +62,65 @@ def _build_archive_url(page_number):
 
 
 def _extract_date(text):
-    normalized = text.replace("/", "-").replace(".", "-")
-    match = re.search(r"(20\d{2})-(\d{1,2})-(\d{1,2})", normalized)
-    if not match:
+    """从文本中提取日期，支持多种格式"""
+    if not text:
         return None
 
-    year, month, day = [int(value) for value in match.groups()]
-    try:
-        return datetime(year, month, day)
-    except ValueError:
-        return None
+    # 模式列表：按优先级尝试
+    patterns = [
+        # YYYY-MM-DD
+        r"(20\d{2})[-/年\.](\d{1,2})[-/月\.](\d{1,2})",
+        # YYYY-MM
+        r"(20\d{2})[-/年\.](\d{1,2})",
+        # 中文日期：YYYY年MM月DD日
+        r"(20\d{2})年(\d{1,2})月(\d{1,2})日",
+        # 月份英文简写：DD Mon YYYY
+        r"(\d{1,2})\s+(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)\s+(20\d{2})",
+    ]
+
+    month_map = {
+        "Jan": 1, "Feb": 2, "Mar": 3, "Apr": 4, "May": 5, "Jun": 6,
+        "Jul": 7, "Aug": 8, "Sep": 9, "Oct": 10, "Nov": 11, "Dec": 12
+    }
+
+    for pattern in patterns:
+        match = re.search(pattern, text, re.IGNORECASE)
+        if not match:
+            continue
+
+        groups = match.groups()
+        if len(groups) == 3:
+            # 处理三种情况：YYYY-MM-DD 或 中文日期 或 DD Mon YYYY
+            if groups[1].isalpha():
+                # DD Mon YYYY
+                day, month_str, year = int(groups[0]), groups[1], int(groups[2])
+                month = month_map.get(month_str.capitalize())
+            else:
+                # YYYY-MM-DD 或中文日期
+                year, month, day = int(groups[0]), int(groups[1]), int(groups[2])
+        elif len(groups) == 2:
+            # YYYY-MM
+            year, month = int(groups[0]), int(groups[1])
+            day = 1  # 默认第一天
+        else:
+            continue
+
+        try:
+            return datetime(year, month, day)
+        except ValueError:
+            continue
+
+    # 如果所有模式都失败，尝试更宽松的匹配
+    # 查找任何看起来像日期的数字组合
+    fallback = re.search(r"(20\d{2})[^\d]*(\d{1,2})[^\d]*(\d{1,2})", text)
+    if fallback:
+        try:
+            year, month, day = [int(x) for x in fallback.groups()]
+            return datetime(year, month, day)
+        except ValueError:
+            pass
+
+    return None
 
 
 def _parse_list_page(html_text, page_url):
@@ -205,7 +263,7 @@ def _parse_article_detail(html_text):
 def _target_range(year=None, months=12, start_date=None, end_date=None):
     if start_date and end_date:
         return start_date, end_date
-    now = datetime.now(timezone.utc)
+    now = datetime.utcnow()
     if year:
         return datetime(year, 1, 1), datetime(year, 12, 31, 23, 59, 59)
     start = now - timedelta(days=max(months, 1) * 30)
