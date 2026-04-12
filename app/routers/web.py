@@ -1392,40 +1392,49 @@ async def yesterday_page(
 async def categories_page(
     page: int = Query(default=1, ge=1),
     source: Optional[str] = Query(default=None),
+    category: str = Query(default="shizheng"),
 ):
     current_year = datetime.now(LOCAL_TZ).year
-    shizheng_items, _ = query_news(year=None, search=None, months=24, source=source, category="时政")
-    source_counts = _source_counts(shizheng_items)
-    page_items, current_page, total_pages = _paginate_sequence(shizheng_items, page, ITEMS_PER_PAGE)
+    all_items, _ = query_news(year=None, search=None, months=24, source=source)
+    source_counts = _source_counts(all_items)
+    category_counts = _category_counts(all_items)
+    selected_category = category_from_slug(category)
+    selected_items = _filter_items_by_category(all_items, selected_category)
+    page_items, current_page, total_pages = _paginate_sequence(selected_items, page, ITEMS_PER_PAGE)
     year_counts = get_year_counts(min_year=MIN_FILTER_YEAR)
 
     main_html = (
         "<section class='panel'>"
-        "<div class='panel-head'><div><h2>时政专题</h2><div class='panel-subtitle'>分类页只保留时政主专题，不再堆叠要闻预览等重复模块。</div></div>"
-        f"<span>{len(shizheng_items)} 条</span></div>"
-        + _render_scroll_shell(_render_news_stream(page_items, "当前还没有可展示的时政专题内容。"))
-        + _render_pager("/categories", current_page, total_pages, source=source)
+        "<div class='panel-head'><div><h2>专题入口</h2><div class='panel-subtitle'>数据源里的分类专题统一在这里，不再分散到其他页面。</div></div></div>"
+        + _render_category_overview(category_counts)
+        + "</section>"
+        + "<section class='panel'>"
+        f"<div class='panel-head'><div><h2>{escape(selected_category)}专题</h2><div class='panel-subtitle'>当前专题下的时政内容按时间倒序展示。</div></div>"
+        f"<span>{len(selected_items)} 条</span></div>"
+        + _render_scroll_shell(_render_news_stream(page_items, f"当前还没有可展示的{selected_category}专题内容。"))
+        + _render_pager("/categories", current_page, total_pages, source=source, category=category)
         + "</section>"
     )
 
     return _render_layout(
         active_tab="categories",
         hero_title="分类专题",
-        hero_text="分类页只聚焦时政专题，避免重复预览和多入口造成干扰。",
+        hero_text="分类专题页统一承接所有专题分类入口，默认展示时政专题，并支持切换来源筛选。",
         stats=[
-            ("时政专题条数", str(len(shizheng_items))),
+            ("专题数量", str(len([count for count in category_counts.values() if count > 0]))),
+            ("当前专题", selected_category),
             ("数据库总条数", str(count_news_records())),
-            ("当前年份", str(current_year)),
             ("当前来源", source_label(source) if source else "全部来源"),
         ],
         main_html=main_html,
         side_html=_shared_sidebar(
             year_counts,
             current_year,
-            shizheng_items,
+            all_items,
             source_counts,
             "/categories",
             active_source=source,
+            category=category,
         ),
         year_counts=year_counts,
         source_counts=source_counts,

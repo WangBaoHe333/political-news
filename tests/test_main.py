@@ -38,8 +38,9 @@ def test_categories_and_sources_pages(client):
     """测试分类页和数据源页"""
     categories_response = client.get("/categories")
     assert categories_response.status_code == 200
+    assert "专题入口" in categories_response.text
     assert "时政专题" in categories_response.text
-    assert "分类页只保留时政主专题" in categories_response.text
+    assert "分类专题页统一承接所有专题分类入口" in categories_response.text
 
     sources_response = client.get("/sources")
     assert sources_response.status_code == 200
