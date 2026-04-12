@@ -148,6 +148,7 @@ def test_status_page(client):
     assert "来源覆盖" in response.text
     assert "同步页只保留任务状态和来源健康" in response.text
     assert "来源告警" in response.text
+    assert "连续异常来源" in response.text
 
 
 def test_news_detail_page(client, monkeypatch):
@@ -277,8 +278,12 @@ def test_sync_status_endpoint(client):
     assert "message" in data
     assert "last_sync_at" in data
     assert "source_alerts" in data
+    assert "source_health" in data
+    assert "critical_sources" in data
     assert isinstance(data["in_progress"], bool)
     assert isinstance(data["source_alerts"], list)
+    assert isinstance(data["source_health"], dict)
+    assert isinstance(data["critical_sources"], list)
 
 
 def test_sync_endpoint_with_params(client, monkeypatch):

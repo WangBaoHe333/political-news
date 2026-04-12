@@ -232,3 +232,27 @@ def test_source_health_callback_for_html_error(monkeypatch):
     assert len(source_health) == 1
     assert source_health[0]["status"] == "error"
     assert source_health[0]["source"] == "mfa"
+
+
+def test_source_health_callback_for_rss_error(monkeypatch):
+    monkeypatch.setattr(
+        "app.fetch_news.CURATED_RSS_SOURCES",
+        [
+            {
+                "source": "xinhuanet",
+                "category": "时政",
+                "feed_url": "https://example.com/rss.xml",
+                "base_url": "https://www.news.cn/",
+                "max_entries": 5,
+            }
+        ],
+    )
+    monkeypatch.setattr("app.fetch_news._fetch_url", lambda _url: (_ for _ in ()).throw(URLError("network down")))
+
+    events = []
+    _load_external_source_feeds(progress_callback=lambda info: events.append(info))
+    source_health = [event for event in events if event.get("stage") == "source_health"]
+
+    assert len(source_health) == 1
+    assert source_health[0]["status"] == "error"
+    assert source_health[0]["source"] == "xinhuanet"

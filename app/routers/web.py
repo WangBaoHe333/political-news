@@ -350,6 +350,12 @@ def _render_sync_panel(task_status: Dict[str, object], last_sync_at: str, last_s
     else:
         source_alerts = []
     source_alert_text = "；".join(source_alerts)
+    critical_sources = task_status.get("critical_sources") or []
+    if isinstance(critical_sources, list):
+        critical_sources = [str(item) for item in critical_sources if str(item).strip()]
+    else:
+        critical_sources = []
+    critical_text = "、".join(source_label(source) for source in critical_sources)
     busy_class = "status-badge busy" if task_status["in_progress"] else "status-badge"
     sync_admin_token = get_settings().sync_admin_token
     action_html = (
@@ -391,6 +397,7 @@ def _render_sync_panel(task_status: Dict[str, object], last_sync_at: str, last_s
       <div class="notice compact" id="sync-message"><strong>当前状态：</strong>{escape(str(message))}</div>
       <div class="notice compact" id="sync-last-result"><strong>最近结果：</strong>{escape(last_result)}</div>
       <div class="notice compact" id="sync-source-alerts"><strong>来源告警：</strong>{escape(source_alert_text or "无")}</div>
+      <div class="notice compact" id="sync-critical-sources"><strong>连续异常来源：</strong>{escape(critical_text or "无")}</div>
       {action_html}
     </section>
     """
@@ -1217,6 +1224,7 @@ def _render_layout(
             const message = document.getElementById('sync-message');
             const lastResult = document.getElementById('sync-last-result');
             const sourceAlerts = document.getElementById('sync-source-alerts');
+            const criticalSources = document.getElementById('sync-critical-sources');
 
             const busy = Boolean(data.in_progress);
             badge.textContent = busy ? '进行中' : '空闲';
@@ -1230,6 +1238,10 @@ def _render_layout(
             if (sourceAlerts) {{
               const alerts = Array.isArray(data.source_alerts) ? data.source_alerts : [];
               sourceAlerts.innerHTML = '<strong>来源告警：</strong>' + (alerts.length ? alerts.join('；') : '无');
+            }}
+            if (criticalSources) {{
+              const critical = Array.isArray(data.critical_sources) ? data.critical_sources : [];
+              criticalSources.innerHTML = '<strong>连续异常来源：</strong>' + (critical.length ? critical.join('、') : '无');
             }}
           }} catch (error) {{
             console.warn('sync status refresh failed', error);
