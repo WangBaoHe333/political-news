@@ -14,6 +14,10 @@ logger = logging.getLogger(__name__)
 SYNC_LOCK = threading.Lock()
 
 
+def _utc_now_str() -> str:
+    return datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")
+
+
 def fetch_and_save_news(
     year: Optional[int] = None,
     months: int = 12,
@@ -33,7 +37,7 @@ def fetch_and_save_news(
         progress_callback=progress_callback,
     )
     saved_count = save_news_to_db(news_items)
-    set_app_state("last_sync_at", datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S"))
+    set_app_state("last_sync_at", _utc_now_str())
     set_app_state("last_sync_result", f"本次抓取 {len(news_items)} 条，新增 {saved_count} 条。")
     logger.info("Fetched %s items, saved %s new records", len(news_items), saved_count)
     return {"fetched": len(news_items), "saved": saved_count}
@@ -105,7 +109,7 @@ def reset_stale_sync_state() -> None:
         return
 
     set_app_state("sync_in_progress", "0")
-    set_app_state("sync_finished_at", datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S"))
+    set_app_state("sync_finished_at", _utc_now_str())
 
     existing_message = get_app_state("sync_message", "")
     if existing_message:
@@ -122,26 +126,21 @@ def _run_background_sync(
     max_pages: Optional[int] = None,
     max_items: Optional[int] = None,
 ) -> None:
-    with SYNC_LOCK:
-        set_app_state("sync_in_progress", "1")
-        set_app_state("sync_scope", scope_label)
-        set_app_state("sync_started_at", datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S"))
-        set_app_state("sync_finished_at", "")
-        set_app_state("sync_message", f"{scope_label}后台回填已启动，请稍候刷新进度。")
-        try:
-            result = fetch_and_save_news(
-                year=year, months=months, max_pages=max_pages, max_items=max_items
-            )
-            set_app_state(
-                "sync_message",
-                f"{scope_label}后台回填完成：抓取 {result['fetched']} 条，新增 {result['saved']} 条。",
-            )
-        except Exception as exc:
-            logger.exception("Background sync failed: %s", exc)
-            set_app_state("sync_message", f"{scope_label}后台回填失败：{exc}")
-        finally:
-            set_app_state("sync_finished_at", datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S"))
-            set_app_state("sync_in_progress", "0")
+    try:
+        result = fetch_and_save_news(
+            year=year, months=months, max_pages=max_pages, max_items=max_items
+        )
+        set_app_state(
+            "sync_message",
+            f"{scope_label}后台回填完成：抓取 {result['fetched']} 条，新增 {result['saved']} 条。",
+        )
+    except Exception as exc:
+        logger.exception("Background sync failed: %s", exc)
+        set_app_state("sync_message", f"{scope_label}后台回填失败：{exc}")
+    finally:
+        set_app_state("sync_finished_at", _utc_now_str())
+        set_app_state("sync_in_progress", "0")
+        SYNC_LOCK.release()
 
 
 def month_batches(total_months: int, batch_size: int = 3) -> List[Tuple[datetime, datetime, int]]:
@@ -183,62 +182,104 @@ def month_batches(total_months: int, batch_size: int = 3) -> List[Tuple[datetime
 def _run_batched_backfill(
     scope_label: str, total_months: int, batch_size: int = 3, max_items: int = 150
 ) -> None:
-    with SYNC_LOCK:
-        set_app_state("sync_in_progress", "1")
-        set_app_state("sync_scope", scope_label)
-        set_app_state("sync_started_at", datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S"))
-        set_app_state("sync_finished_at", "")
-        completed = 0
-        total_fetched = 0
-        total_saved = 0
-        try:
-            for start, end, months in month_batches(total_months, batch_size=batch_size):
-                label = f"{start.strftime('%Y-%m')} 至 {end.strftime('%Y-%m')}"
-                set_app_state("sync_message", f"{scope_label}后台回填进行中：正在处理 {label}。")
+    completed = 0
+    total_fetched = 0
+    total_saved = 0
+    try:
+        for start, end, months in month_batches(total_months, batch_size=batch_size):
+            label = f"{start.strftime('%Y-%m')} 至 {end.strftime('%Y-%m')}"
+            set_app_state("sync_message", f"{scope_label}后台回填进行中：正在处理 {label}。")
 
-                def on_progress(info: Dict[str, Any]) -> None:
-                    if info.get("stage") == "archive_page":
-                        page = info.get("page")
-                        matched = info.get("matched")
-                        added_total = info.get("added_total")
-                        note = info.get("note", "")
-                        suffix = f"，备注：{note}" if note else ""
-                        set_app_state(
-                            "sync_message",
-                            f"{scope_label}后台回填进行中：{label}，历史页 home_{page}.htm 命中 {matched} 条，"
-                            f"当前累计待写入 {added_total} 条{suffix}。",
-                        )
-                    elif info.get("stage") == "json":
-                        set_app_state(
-                            "sync_message",
-                            f"{scope_label}后台回填进行中：{label}，近期 JSON 命中 {info.get('collected', 0)} 条。",
-                        )
+            def on_progress(info: Dict[str, Any]) -> None:
+                if info.get("stage") == "archive_page":
+                    page = info.get("page")
+                    matched = info.get("matched")
+                    added_total = info.get("added_total")
+                    note = info.get("note", "")
+                    suffix = f"，备注：{note}" if note else ""
+                    set_app_state(
+                        "sync_message",
+                        f"{scope_label}后台回填进行中：{label}，历史页 home_{page}.htm 命中 {matched} 条，"
+                        f"当前累计待写入 {added_total} 条{suffix}。",
+                    )
+                elif info.get("stage") == "json":
+                    set_app_state(
+                        "sync_message",
+                        f"{scope_label}后台回填进行中：{label}，近期 JSON 命中 {info.get('collected', 0)} 条。",
+                    )
 
-                result = fetch_and_save_news(
-                    start_date=start,
-                    end_date=end,
-                    max_items=max_items,
-                    progress_callback=on_progress,
-                )
-                completed += months
-                total_fetched += result["fetched"]
-                total_saved += result["saved"]
-                set_app_state(
-                    "sync_message",
-                    f"{scope_label}后台回填进行中：已完成 {completed}/{total_months} 个月，"
-                    f"累计抓取 {total_fetched} 条，新增 {total_saved} 条。",
-                )
+            result = fetch_and_save_news(
+                start_date=start,
+                end_date=end,
+                max_items=max_items,
+                progress_callback=on_progress,
+            )
+            completed += months
+            total_fetched += result["fetched"]
+            total_saved += result["saved"]
+            set_app_state(
+                "sync_message",
+                f"{scope_label}后台回填进行中：已完成 {completed}/{total_months} 个月，"
+                f"累计抓取 {total_fetched} 条，新增 {total_saved} 条。",
+            )
 
-            final_message = f"{scope_label}后台回填完成：累计抓取 {total_fetched} 条，新增 {total_saved} 条。"
-            set_app_state("sync_message", final_message)
-            set_app_state("last_sync_at", datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S"))
-            set_app_state("last_sync_result", final_message)
-        except Exception as exc:
-            logger.exception("Batched backfill failed: %s", exc)
-            set_app_state("sync_message", f"{scope_label}后台回填失败：{exc}")
-        finally:
-            set_app_state("sync_finished_at", datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S"))
-            set_app_state("sync_in_progress", "0")
+        final_message = f"{scope_label}后台回填完成：累计抓取 {total_fetched} 条，新增 {total_saved} 条。"
+        set_app_state("sync_message", final_message)
+        set_app_state("last_sync_at", _utc_now_str())
+        set_app_state("last_sync_result", final_message)
+    except Exception as exc:
+        logger.exception("Batched backfill failed: %s", exc)
+        set_app_state("sync_message", f"{scope_label}后台回填失败：{exc}")
+    finally:
+        set_app_state("sync_finished_at", _utc_now_str())
+        set_app_state("sync_in_progress", "0")
+        SYNC_LOCK.release()
+
+
+def run_sync_now(
+    scope_label: str,
+    year: Optional[int] = None,
+    months: int = 12,
+    max_pages: Optional[int] = None,
+    max_items: Optional[int] = None,
+) -> Optional[Dict[str, int]]:
+    if not SYNC_LOCK.acquire(blocking=False):
+        return None
+
+    set_app_state("sync_in_progress", "1")
+    set_app_state("sync_scope", scope_label)
+    set_app_state("sync_started_at", _utc_now_str())
+    set_app_state("sync_finished_at", "")
+    set_app_state("sync_message", f"{scope_label}进行中，请稍候。")
+    try:
+        result = fetch_and_save_news(
+            year=year,
+            months=months,
+            max_pages=max_pages,
+            max_items=max_items,
+        )
+        set_app_state(
+            "sync_message",
+            f"{scope_label}完成：抓取 {result['fetched']} 条，新增 {result['saved']} 条。",
+        )
+        return result
+    except Exception as exc:
+        logger.exception("Sync run failed: %s", exc)
+        set_app_state("sync_message", f"{scope_label}失败：{exc}")
+        raise
+    finally:
+        set_app_state("sync_finished_at", _utc_now_str())
+        set_app_state("sync_in_progress", "0")
+        SYNC_LOCK.release()
+
+
+def run_scheduled_sync(months: int = 1, max_pages: int = 12, max_items: int = 80) -> Dict[str, int]:
+    scope = "定时同步"
+    result = run_sync_now(scope_label=scope, months=months, max_pages=max_pages, max_items=max_items)
+    if result is None:
+        logger.info("Scheduled sync skipped because another sync task is running.")
+        return {"fetched": 0, "saved": 0}
+    return result
 
 
 def start_background_sync(
@@ -248,39 +289,65 @@ def start_background_sync(
     max_pages: Optional[int] = None,
     max_items: Optional[int] = None,
 ) -> bool:
-    if get_app_state("sync_in_progress", "0") == "1":
+    if not SYNC_LOCK.acquire(blocking=False):
         return False
 
-    worker = threading.Thread(
-        target=_run_background_sync,
-        kwargs={
-            "scope_label": scope_label,
-            "year": year,
-            "months": months,
-            "max_pages": max_pages,
-            "max_items": max_items,
-        },
-        daemon=True,
-    )
-    worker.start()
-    return True
+    set_app_state("sync_in_progress", "1")
+    set_app_state("sync_scope", scope_label)
+    set_app_state("sync_started_at", _utc_now_str())
+    set_app_state("sync_finished_at", "")
+    set_app_state("sync_message", f"{scope_label}后台回填已启动，请稍候刷新进度。")
+
+    try:
+        worker = threading.Thread(
+            target=_run_background_sync,
+            kwargs={
+                "scope_label": scope_label,
+                "year": year,
+                "months": months,
+                "max_pages": max_pages,
+                "max_items": max_items,
+            },
+            daemon=True,
+        )
+        worker.start()
+        return True
+    except Exception:
+        set_app_state("sync_in_progress", "0")
+        set_app_state("sync_finished_at", _utc_now_str())
+        set_app_state("sync_message", f"{scope_label}后台任务启动失败。")
+        SYNC_LOCK.release()
+        raise
 
 
 def start_batched_backfill(
     scope_label: str, total_months: int, batch_size: int = 3, max_items: int = 150
 ) -> bool:
-    if get_app_state("sync_in_progress", "0") == "1":
+    if not SYNC_LOCK.acquire(blocking=False):
         return False
 
-    worker = threading.Thread(
-        target=_run_batched_backfill,
-        kwargs={
-            "scope_label": scope_label,
-            "total_months": total_months,
-            "batch_size": batch_size,
-            "max_items": max_items,
-        },
-        daemon=True,
-    )
-    worker.start()
-    return True
+    set_app_state("sync_in_progress", "1")
+    set_app_state("sync_scope", scope_label)
+    set_app_state("sync_started_at", _utc_now_str())
+    set_app_state("sync_finished_at", "")
+    set_app_state("sync_message", f"{scope_label}后台回填已启动，请稍候刷新进度。")
+
+    try:
+        worker = threading.Thread(
+            target=_run_batched_backfill,
+            kwargs={
+                "scope_label": scope_label,
+                "total_months": total_months,
+                "batch_size": batch_size,
+                "max_items": max_items,
+            },
+            daemon=True,
+        )
+        worker.start()
+        return True
+    except Exception:
+        set_app_state("sync_in_progress", "0")
+        set_app_state("sync_finished_at", _utc_now_str())
+        set_app_state("sync_message", f"{scope_label}后台任务启动失败。")
+        SYNC_LOCK.release()
+        raise

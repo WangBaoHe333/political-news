@@ -8,7 +8,7 @@ from fastapi import FastAPI
 from app.config import get_settings
 from app.database import init_db
 from app.routers import news_api, sync_routes, web
-from app.sync_service import fetch_and_save_news, has_recent_two_years_data, reset_stale_sync_state
+from app.sync_service import has_recent_two_years_data, reset_stale_sync_state, start_background_sync
 from app.tasks import setup_scheduler
 
 logging.basicConfig(level=logging.INFO)
@@ -27,10 +27,12 @@ async def lifespan(app: FastAPI):
     should_bootstrap = settings.bootstrap_recent_news_on_startup and not has_recent_two_years_data(months=24)
 
     if settings.auto_sync_on_startup or should_bootstrap:
-        try:
-            fetch_and_save_news(months=24, max_pages=260, max_items=700)
-        except Exception as exc:
-            logger.exception("Startup bootstrap failed: %s", exc)
+        scope = "启动初始化同步"
+        started = start_background_sync(scope, months=24, max_pages=260, max_items=700)
+        if started:
+            logger.info("Startup sync started in background.")
+        else:
+            logger.info("Startup sync skipped because another sync task is running.")
     else:
         logger.info("Startup auto sync is disabled and cached coverage looks sufficient.")
     yield

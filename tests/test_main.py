@@ -13,15 +13,17 @@ def test_home_page(client):
     assert "今日时政" in response.text
     assert "只保留今日时政主列表和必要筛选" in response.text
     assert "同步状态" in response.text
-    assert "只显示数据库里日期为今天的内容" in response.text
+    assert (
+        "只显示数据库里日期为今天的内容" in response.text
+        or "首页已自动回退展示数据库里的最近更新" in response.text
+    )
 
 
 def test_latest_page_alias(client):
     """测试最新时政别名页面"""
-    response = client.get("/latest")
-    assert response.status_code == 200
-    assert "全部时政" in response.text
-    assert "完整浏览列表" in response.text
+    response = client.get("/latest", follow_redirects=False)
+    assert response.status_code == 302
+    assert response.headers["location"].startswith("/archive")
 
 
 def test_archive_page(client):
@@ -280,13 +282,22 @@ def test_sync_endpoint_with_params(client, monkeypatch):
     """测试同步端点（带参数），不发起外网抓取。"""
     from app.routers import sync_routes
 
-    def fake_fetch(**kwargs):
+    def fake_run(**kwargs):
         return {"fetched": 0, "saved": 0}
 
-    monkeypatch.setattr(sync_routes, "fetch_and_save_news", fake_fetch)
+    monkeypatch.setattr(sync_routes, "run_sync_now", fake_run)
     response = client.get("/sync?months=1&max_items=10")
     assert response.status_code == 200
     assert response.json() == {"fetched": 0, "saved": 0}
+
+
+def test_sync_endpoint_returns_409_when_busy(client, monkeypatch):
+    """当已有同步运行中时，应返回 409。"""
+    from app.routers import sync_routes
+
+    monkeypatch.setattr(sync_routes, "run_sync_now", lambda **kwargs: None)
+    response = client.get("/sync?months=1&max_items=10")
+    assert response.status_code == 409
 
 
 def test_backfill_view_endpoint(client):

@@ -5,12 +5,11 @@ import json
 import time
 import random
 import ssl
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta
 from html import unescape
 from urllib.error import HTTPError, URLError
 from urllib.parse import urljoin, urlparse
 from urllib.request import Request, urlopen
-from xml.etree import ElementTree
 
 from bs4 import BeautifulSoup
 import feedparser
@@ -27,41 +26,42 @@ LIST_JSON_URL = os.getenv("LIST_JSON_URL", "https://www.gov.cn/yaowen/liebiao/YA
 LIST_ARCHIVE_BASE_URL = os.getenv("LIST_ARCHIVE_BASE_URL", "https://www.gov.cn/yaowen/liebiao/")
 HTTP_TIMEOUT = int(os.getenv("HTTP_TIMEOUT_SECONDS", "30"))
 HTTP_RETRIES = int(os.getenv("HTTP_RETRIES", "2"))
+HTTP_VERIFY_TLS = os.getenv("HTTP_VERIFY_TLS", "1").lower() in {"1", "true", "yes", "on"}
 DEFAULT_MAX_PAGES = int(os.getenv("SYNC_MAX_PAGES", "260"))
 DEFAULT_MAX_ITEMS = int(os.getenv("SYNC_MAX_ITEMS", "400"))
 CURATED_RSS_SOURCES = [
     {
         "source": "people_cn",
         "category": "时政",
-        "feed_url": "http://www.people.com.cn/rss/politics.xml",
+        "feed_url": "https://www.people.com.cn/rss/politics.xml",
         "base_url": "https://politics.people.com.cn/",
         "max_entries": 20,
     },
     {
         "source": "people_cn",
         "category": "国际",
-        "feed_url": "http://www.people.com.cn/rss/world.xml",
+        "feed_url": "https://www.people.com.cn/rss/world.xml",
         "base_url": "https://world.people.com.cn/",
         "max_entries": 20,
     },
     {
         "source": "people_cn",
         "category": "港澳台",
-        "feed_url": "http://www.people.com.cn/rss/haixia.xml",
+        "feed_url": "https://www.people.com.cn/rss/haixia.xml",
         "base_url": "https://tw.people.com.cn/",
         "max_entries": 20,
     },
     {
         "source": "people_cn",
         "category": "军事",
-        "feed_url": "http://www.people.com.cn/rss/military.xml",
+        "feed_url": "https://www.people.com.cn/rss/military.xml",
         "base_url": "https://military.people.com.cn/",
         "max_entries": 20,
     },
     {
         "source": "xinhuanet",
         "category": "时政",
-        "feed_url": "http://www.xinhuanet.com/politics/news_politics.xml",
+        "feed_url": "https://www.xinhuanet.com/politics/news_politics.xml",
         "base_url": "https://www.news.cn/",
         "max_entries": 24,
     },
@@ -180,8 +180,7 @@ def _is_reliable_item(item):
 
 def _fetch_url(url):
     last_error = None
-    # 创建不验证SSL证书的上下文
-    context = ssl._create_unverified_context()
+    context = ssl.create_default_context() if HTTP_VERIFY_TLS else ssl._create_unverified_context()
     for attempt in range(HTTP_RETRIES + 1):
         try:
             request = Request(url, headers={"User-Agent": "political-news/1.0"})
@@ -252,16 +251,6 @@ def _extract_date(text):
             return datetime(year, month, day)
         except ValueError:
             continue
-
-    # 如果所有模式都失败，尝试更宽松的匹配
-    # 查找任何看起来像日期的数字组合
-    fallback = re.search(r"(20\d{2})[^\d]*(\d{1,2})[^\d]*(\d{1,2})", text)
-    if fallback:
-        try:
-            year, month, day = [int(x) for x in fallback.groups()]
-            return datetime(year, month, day)
-        except ValueError:
-            pass
 
     return None
 

@@ -11,7 +11,7 @@ from urllib.parse import urlencode, urlparse
 from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, Query
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, RedirectResponse
 
 from app.config import get_settings
 from app.news_data import (
@@ -22,7 +22,6 @@ from app.news_data import (
     get_news_by_id,
     get_year_counts,
     group_by_month,
-    latest_news_date,
     query_news,
     source_label,
     source_trust_label,
@@ -1251,58 +1250,12 @@ def _shared_sidebar(
     )
 
 
-@router.get("/latest", response_class=HTMLResponse)
+@router.get("/latest")
 async def latest_page(
     page: int = Query(default=1, ge=1),
     source: Optional[str] = Query(default=None),
 ):
-    current_year = datetime.now(LOCAL_TZ).year
-    all_recent_items, _ = query_news(year=None, search=None, months=24)
-    source_counts = _source_counts(all_recent_items)
-    recent_items = _filter_items_by_source(all_recent_items, source)
-    page_items, current_page, total_pages = _paginate_sequence(recent_items, page, ITEMS_PER_PAGE)
-    year_counts = get_year_counts(min_year=MIN_FILTER_YEAR)
-    latest_date = latest_news_date(all_recent_items)
-
-    main_html = (
-        "<section class='panel'>"
-        "<div class='panel-head'><div><h2>全部时政</h2><div class='panel-subtitle'>这里保留完整浏览列表，按发布时间倒序展示。</div></div>"
-        f"<span>{len(recent_items)} 条</span></div>"
-        + _render_scroll_shell(
-            _render_news_stream(page_items, "数据库中还没有可展示的时政内容，请先同步。")
-        )
-        + _render_pager("/", current_page, total_pages, source=source)
-        + "</section>"
-    )
-
-    side_html = _shared_sidebar(
-        year_counts,
-        current_year,
-        all_recent_items,
-        source_counts,
-        "/",
-        active_source=source,
-    )
-    stats = [
-        ("数据库总条数", str(count_news_records())),
-        ("当前列表条数", str(len(all_recent_items))),
-        ("当前来源", source_label(source) if source else "全部来源"),
-        ("最新发布日期", latest_date.strftime("%Y-%m-%d") if latest_date else "暂无数据"),
-    ]
-    return _render_layout(
-        active_tab="archive",
-        hero_title="全部时政",
-        hero_text="这里保留为完整浏览页，方便集中翻阅数据库内容，但日常默认首页已经切回今日时政。",
-        stats=stats,
-        main_html=main_html,
-        side_html=side_html,
-        year_counts=year_counts,
-        source_counts=source_counts,
-        current_year=current_year,
-        selected_year=current_year,
-        selected_source=source,
-        page_title="全部时政",
-    )
+    return RedirectResponse(url=_build_href("/archive", page=page, source=source), status_code=302)
 
 
 @router.get("/", response_class=HTMLResponse)

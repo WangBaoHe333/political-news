@@ -7,7 +7,7 @@ def setup_scheduler():
     settings = get_settings()
     scheduler = BackgroundScheduler(timezone=settings.scheduled_sync_timezone)
     scheduler.add_job(
-        "app.sync_service:fetch_and_save_news",
+        "app.sync_service:run_scheduled_sync",
         "cron",
         hour=f"*/{settings.scheduled_sync_interval_hours}",
         minute=0,

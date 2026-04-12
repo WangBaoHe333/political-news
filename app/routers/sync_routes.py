@@ -4,14 +4,14 @@ from datetime import datetime, timezone
 from typing import Optional
 from urllib.parse import quote
 
-from fastapi import APIRouter, Query
+from fastapi import APIRouter, Header, Query
 from fastapi import HTTPException
 from fastapi.responses import JSONResponse, RedirectResponse
 
 from app.config import get_settings
 from app.sync_service import (
-    fetch_and_save_news,
     get_sync_status,
+    run_sync_now,
     start_background_sync,
     start_batched_backfill,
 )
@@ -34,11 +34,22 @@ async def sync_news(
     max_pages: Optional[int] = Query(default=None, ge=1, le=500),
     max_items: Optional[int] = Query(default=None, ge=1, le=1000),
     token: Optional[str] = Query(default=None),
+    x_sync_token: Optional[str] = Header(default=None, alias="X-Sync-Token"),
 ):
-    _ensure_sync_token(token)
-    result = fetch_and_save_news(
-        year=year, months=months, max_pages=max_pages, max_items=max_items
-    )
+    _ensure_sync_token(x_sync_token or token)
+    try:
+        result = run_sync_now(
+            scope_label=f"{year}年手动同步" if year else f"近{months}个月手动同步",
+            year=year,
+            months=months,
+            max_pages=max_pages,
+            max_items=max_items,
+        )
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"同步执行失败：{exc}") from exc
+
+    if result is None:
+        raise HTTPException(status_code=409, detail="已有同步任务在运行，请稍后再试。")
     return JSONResponse(result)
 
 
@@ -49,8 +60,9 @@ async def sync_view(
     max_pages: Optional[int] = Query(default=None, ge=1, le=500),
     max_items: Optional[int] = Query(default=None, ge=1, le=1000),
     token: Optional[str] = Query(default=None),
+    x_sync_token: Optional[str] = Header(default=None, alias="X-Sync-Token"),
 ):
-    _ensure_sync_token(token)
+    _ensure_sync_token(x_sync_token or token)
     scope = f"{year}年" if year else f"近{months}个月"
     started = start_background_sync(scope, year=year, months=months, max_pages=max_pages, max_items=max_items)
     if started:
@@ -72,8 +84,9 @@ async def backfill_view(
     batch_size: int = Query(default=3, ge=1, le=6),
     max_items: int = Query(default=150, ge=20, le=400),
     token: Optional[str] = Query(default=None),
+    x_sync_token: Optional[str] = Header(default=None, alias="X-Sync-Token"),
 ):
-    _ensure_sync_token(token)
+    _ensure_sync_token(x_sync_token or token)
     scope = f"近{months}个月分批回填"
     started = start_batched_backfill(scope, total_months=months, batch_size=batch_size, max_items=max_items)
     if started:
