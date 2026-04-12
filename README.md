@@ -38,62 +38,9 @@
 
 GitHub 仓库主要用于：
 - 展示项目源码与功能说明
-- 记录更新日志与运维文档
-- 维护在线版本
+- 记录在线版本更新
 
 如果你只是想使用网站，请直接访问上方在线地址，不需要自己部署。
-
-## 本地开发（开发者使用）
-
-```bash
-git clone https://github.com/WangBaoHe333/political-news.git
-cd political-news
-python3 -m venv .venv
-source .venv/bin/activate
-pip install -r requirements.txt
-cp .env.example .env
-uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
-```
-
-本地启动后可访问：
-- 首页：`http://127.0.0.1:8000/`
-- 健康检查：`http://127.0.0.1:8000/health`
-- 同步状态：`http://127.0.0.1:8000/status`
-
-## 关键环境变量
-
-见 [.env.example](./.env.example)。
-
-最关键的是：
-- `DATABASE_URL`
-  - 非 Docker 推荐：`sqlite:///./political_news.db`
-  - Docker + postgres：`postgresql://postgres:password@postgres:5432/political_news`
-- `SCHEDULED_SYNC_INTERVAL_HOURS=1`
-- `SCHEDULED_SYNC_TIMEZONE=Asia/Shanghai`
-- `SYNC_ADMIN_TOKEN=<长随机字符串>`
-
-## 部署说明（仅维护者使用）
-
-推荐使用 `systemd + uvicorn + sqlite`（网络稳定、排障简单）。
-
-完整步骤见 [DEPLOY.md](./DEPLOY.md)。
-
-## 常用同步接口
-
-生产环境如果配置了 `SYNC_ADMIN_TOKEN`，调用需带 `token` 或请求头 `X-Sync-Token`。
-
-- 手动同步近 N 月：
-  - `GET /sync?months=3&max_items=300&token=...`
-- 手动同步某年：
-  - `GET /sync?year=2026&max_items=500&token=...`
-- 查看同步状态：
-  - `GET /sync-status`
-- 分批回填（页面入口）：
-  - `GET /backfill-view?months=24&batch_size=2&max_items=120&token=...`
-
-## 排障入口
-
-常见问题（空白页、数据库连接到 `postgres` 失败、时区不对、同步失败）见 [RUNBOOK.md](./RUNBOOK.md)。
 
 ## 测试
 
