@@ -29,6 +29,15 @@ HTTP_RETRIES = int(os.getenv("HTTP_RETRIES", "2"))
 HTTP_VERIFY_TLS = os.getenv("HTTP_VERIFY_TLS", "1").lower() in {"1", "true", "yes", "on"}
 DEFAULT_MAX_PAGES = int(os.getenv("SYNC_MAX_PAGES", "260"))
 DEFAULT_MAX_ITEMS = int(os.getenv("SYNC_MAX_ITEMS", "800"))
+
+
+def _people_archive_urls(max_pages=30):
+    urls = ["https://politics.people.com.cn/GB/1024/index.html"]
+    for idx in range(2, max_pages + 1):
+        urls.append(f"https://politics.people.com.cn/GB/1024/index{idx}.html")
+    return urls
+
+
 CURATED_RSS_SOURCES = [
     {
         "source": "people_cn",
@@ -81,6 +90,15 @@ CURATED_RSS_SOURCES = [
     },
 ]
 CURATED_HTML_SOURCES = [
+    {
+        "source": "people_cn",
+        "category": "时政",
+        "list_urls": _people_archive_urls(40),
+        "base_url": "https://politics.people.com.cn/",
+        "link_keywords": ("/n1/",),
+        "article_patterns": (".html", "/n1/"),
+        "max_entries": 180,
+    },
     {
         "source": "xinhuanet",
         "category": "时政",

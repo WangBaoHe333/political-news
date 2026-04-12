@@ -7,6 +7,7 @@ from unittest.mock import patch
 import pytest
 
 from app.fetch_news import (
+    _people_archive_urls,
     _extract_date,
     _fetch_url,
     _is_allowed_source_link,
@@ -266,3 +267,10 @@ def test_iter_month_list_pages_builds_month_directories():
     assert "https://www.gov.cn/yaowen/liebiao/202503/index.htm" in urls
     assert "https://www.gov.cn/yaowen/liebiao/202503/index_2.htm" in urls
     assert "https://www.gov.cn/yaowen/liebiao/202501/index.htm" in urls
+
+
+def test_people_archive_urls_build_expected_pages():
+    urls = _people_archive_urls(5)
+    assert urls[0] == "https://politics.people.com.cn/GB/1024/index.html"
+    assert "https://politics.people.com.cn/GB/1024/index2.html" in urls
+    assert "https://politics.people.com.cn/GB/1024/index5.html" in urls
