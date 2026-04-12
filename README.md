@@ -19,7 +19,7 @@
 - 内容策略：保留原文链接，不做 AI 改写
 - 终端适配：桌面 + 移动端自适应
 
-## 快速开始（本地）
+## 快速开始（本地开发）
 
 ```bash
 git clone https://github.com/WangBaoHe333/political-news.git
@@ -31,10 +31,14 @@ cp .env.example .env
 uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
 ```
 
-访问：
+本地启动后可访问：
 - 首页：`http://127.0.0.1:8000/`
 - 健康检查：`http://127.0.0.1:8000/health`
 - 同步状态：`http://127.0.0.1:8000/status`
+
+生产环境访问地址请替换为你自己的服务器 IP 或域名，例如：
+- `http://your-server-ip:8000/`
+- `https://your-domain.com/`
 
 ## 关键环境变量
 
@@ -53,6 +57,13 @@ uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
 推荐使用 `systemd + uvicorn + sqlite`（网络稳定、排障简单）。
 
 完整步骤见 [DEPLOY.md](./DEPLOY.md)。
+
+## 访问说明
+
+- GitHub README 中出现的 `127.0.0.1` / `localhost` 仅表示本机开发环境
+- 实际上线访问地址以你的服务器 IP、反向代理地址或正式域名为准
+- 如果项目部署在阿里云、腾讯云或其他 VPS，上线后通常访问 `http://<服务器IP>:8000/`
+- 如果配置了 Nginx 和 HTTPS，则建议对外只展示正式域名
 
 ## 常用同步接口
 
