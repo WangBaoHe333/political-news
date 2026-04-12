@@ -100,6 +100,18 @@ CURATED_HTML_SOURCES = [
         "max_entries": 180,
     },
     {
+        "source": "chinanews",
+        "category": "时政",
+        "list_urls": [
+            "https://www.chinanews.com.cn/china.shtml",
+            "https://www.chinanews.com.cn/world.shtml",
+        ],
+        "base_url": "https://www.chinanews.com.cn/",
+        "link_keywords": ("/202", "/shipin/cns", "/gn/", "/gj/"),
+        "article_patterns": (".shtml", "/202"),
+        "max_entries": 120,
+    },
+    {
         "source": "xinhuanet",
         "category": "时政",
         "list_urls": [

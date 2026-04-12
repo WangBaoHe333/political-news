@@ -5,6 +5,7 @@ import logging
 import threading
 from datetime import datetime, timedelta
 from typing import Any, Callable, Dict, List, Optional, Tuple
+from zoneinfo import ZoneInfo
 
 from app.database import SessionLocal
 from app.fetch_news import fetch_news, save_news_to_db
@@ -13,10 +14,11 @@ from app.models import AppState, News
 logger = logging.getLogger(__name__)
 
 SYNC_LOCK = threading.Lock()
+LOCAL_TZ = ZoneInfo("Asia/Shanghai")
 
 
 def _utc_now_str() -> str:
-    return datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")
+    return datetime.now(LOCAL_TZ).strftime("%Y-%m-%d %H:%M:%S")
 
 
 def _parse_alerts(raw: str) -> List[str]:

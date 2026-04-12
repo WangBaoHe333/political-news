@@ -9,7 +9,12 @@ from app.config import get_settings
 from app.database import init_db
 from app.news_data import count_news_records
 from app.routers import news_api, sync_routes, web
-from app.sync_service import has_recent_two_years_data, reset_stale_sync_state, start_background_sync
+from app.sync_service import (
+    has_recent_two_years_data,
+    reset_stale_sync_state,
+    start_background_sync,
+    start_batched_backfill,
+)
 from app.tasks import setup_scheduler
 
 logging.basicConfig(level=logging.INFO)
@@ -30,13 +35,20 @@ async def lifespan(app: FastAPI):
         settings.bootstrap_recent_news_on_startup and not has_recent_two_years_data(months=24)
     )
 
-    if settings.auto_sync_on_startup or should_bootstrap:
-        scope = "启动初始化同步"
-        started = start_background_sync(scope, months=24, max_pages=260, max_items=700)
+    if should_bootstrap:
+        scope = "启动初始化分批回填"
+        started = start_batched_backfill(scope, total_months=24, batch_size=2, max_items=300)
         if started:
-            logger.info("Startup sync started in background.")
+            logger.info("Startup batched backfill started in background.")
         else:
-            logger.info("Startup sync skipped because another sync task is running.")
+            logger.info("Startup batched backfill skipped because another sync task is running.")
+    elif settings.auto_sync_on_startup:
+        scope = "启动快速同步"
+        started = start_background_sync(scope, months=1, max_pages=40, max_items=240)
+        if started:
+            logger.info("Startup quick sync started in background.")
+        else:
+            logger.info("Startup quick sync skipped because another sync task is running.")
     else:
         logger.info("Startup auto sync is disabled and cached coverage looks sufficient.")
     yield
