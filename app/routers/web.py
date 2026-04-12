@@ -596,6 +596,8 @@ def _render_layout(
           flex-wrap: wrap;
           gap: 10px;
           margin-top: 16px;
+          overflow-x: auto;
+          -webkit-overflow-scrolling: touch;
         }}
         .nav-link, .pager-link {{
           display: inline-flex;
@@ -608,6 +610,7 @@ def _render_layout(
           background: rgba(255,255,255,0.86);
           color: var(--ink);
           transition: transform 0.15s ease, opacity 0.15s ease;
+          white-space: nowrap;
         }}
         .nav-link.active, .pager-link.current {{
           background: var(--accent);
@@ -1173,6 +1176,15 @@ def _render_layout(
           .shell {{ padding-inline: 12px; }}
           .hero {{ padding: 20px; }}
           .stats, .sync-grid, .article-meta-grid {{ grid-template-columns: 1fr; }}
+          .nav-row {{ flex-wrap: nowrap; padding-bottom: 4px; }}
+          .search-form {{ border-radius: 18px; }}
+          .search-form input,
+          .search-form select,
+          .search-form button {{
+            width: 100%;
+            flex: 1 1 100%;
+          }}
+          .search-form button {{ justify-content: center; }}
           .scroll-shell.stream,
           .scroll-shell.months {{
             max-height: none;
@@ -1541,17 +1553,12 @@ async def source_detail_page(
     source_counts = _source_counts(all_items)
     recent_items, _ = query_news(year=None, search=None, months=24)
     year_counts = get_year_counts(min_year=MIN_FILTER_YEAR)
-    category_counts = _category_counts(all_items)
 
     main_html = (
         "<section class='panel'>"
         f"<div class='panel-head'><div><h2>{escape(source_label(source))}</h2><div class='panel-subtitle'>{escape(source_trust_note(source))}</div></div><span>{len(all_items)} 条</span></div>"
         + _render_scroll_shell(_render_news_stream(page_items, f"{source_label(source)} 暂时还没有收录内容。"))
         + _render_pager(f"/source/{source}", current_page, total_pages)
-        + "</section>"
-        + "<section class='panel'>"
-        "<div class='panel-head'><div><h2>来源内专题分布</h2><div class='panel-subtitle'>同一来源里也会有要闻、外交、人事、国际等不同专题。</div></div></div>"
-        + _render_category_overview(category_counts)
         + "</section>"
     )
 

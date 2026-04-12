@@ -7,6 +7,7 @@ from fastapi import FastAPI
 
 from app.config import get_settings
 from app.database import init_db
+from app.news_data import count_news_records
 from app.routers import news_api, sync_routes, web
 from app.sync_service import has_recent_two_years_data, reset_stale_sync_state, start_background_sync
 from app.tasks import setup_scheduler
@@ -24,7 +25,10 @@ async def lifespan(app: FastAPI):
     logger.info("定时任务调度器已启动")
     settings = get_settings()
 
-    should_bootstrap = settings.bootstrap_recent_news_on_startup and not has_recent_two_years_data(months=24)
+    db_is_empty = count_news_records() == 0
+    should_bootstrap = db_is_empty or (
+        settings.bootstrap_recent_news_on_startup and not has_recent_two_years_data(months=24)
+    )
 
     if settings.auto_sync_on_startup or should_bootstrap:
         scope = "启动初始化同步"

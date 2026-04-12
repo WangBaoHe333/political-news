@@ -98,7 +98,6 @@ def test_source_detail_page(client):
     response = client.get("/source/gov_cn?page=1")
     assert response.status_code == 200
     assert "中国政府网" in response.text
-    assert "来源内专题分布" in response.text
 
 
 def test_today_and_yesterday_pages(client):
