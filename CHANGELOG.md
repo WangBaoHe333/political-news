@@ -16,11 +16,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Enhanced `.gitignore` for development environments
 - Development dependencies separation
 - Health check endpoint at `/health`
+- `DEPLOY.md` server deployment runbook for `systemd + uvicorn + sqlite`
+- `RUNBOOK.md` troubleshooting guide for common production failures
 
 ### Changed
 - Updated README.md with detailed development and contribution guidelines
 - Improved project structure and documentation
 - Enhanced error handling and logging
+- Rewrote `README.md` to align with current product behavior and operations
+- Expanded `.env.example` with Docker vs non-Docker database examples and timezone guidance
 
 ### Fixed
 - Various code quality issues identified by linters

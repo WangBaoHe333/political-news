@@ -1154,6 +1154,16 @@ def _render_layout(
         .article-body p {{
           margin: 0;
         }}
+        .site-footer {{
+          margin-top: 18px;
+          padding: 14px 16px;
+          border: 1px solid var(--line);
+          border-radius: 16px;
+          background: rgba(255, 255, 255, 0.74);
+          color: var(--muted);
+          font-size: 13px;
+          line-height: 1.7;
+        }}
         mark {{
           padding: 0 4px;
           border-radius: 6px;
@@ -1219,6 +1229,9 @@ def _render_layout(
           <div class="main-stack">{main_html}</div>
           <aside class="side-stack">{side_html}</aside>
         </section>
+        <footer class="site-footer">
+          本网站内容仅供学习与信息参考，不构成任何官方立场或决策依据。所有时政信息均来自公开来源聚合展示，最终请以原始来源及官方发布为准。如有侵权或内容异议，请联系站点维护者处理。
+        </footer>
       </main>
 
       <script>
