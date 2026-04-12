@@ -211,6 +211,22 @@ def _build_archive_url(page_number):
     return urljoin(LIST_ARCHIVE_BASE_URL, f"home_{page_number}.htm")
 
 
+def _iter_month_list_pages(start_date, end_date, max_index_pages=8):
+    current = datetime(end_date.year, end_date.month, 1)
+    start_month = datetime(start_date.year, start_date.month, 1)
+    pages = []
+    while current >= start_month:
+        month_tag = current.strftime("%Y%m")
+        pages.append(urljoin(LIST_ARCHIVE_BASE_URL, f"{month_tag}/index.htm"))
+        for idx in range(1, max_index_pages + 1):
+            pages.append(urljoin(LIST_ARCHIVE_BASE_URL, f"{month_tag}/index_{idx}.htm"))
+        if current.month == 1:
+            current = current.replace(year=current.year - 1, month=12)
+        else:
+            current = current.replace(month=current.month - 1)
+    return pages
+
+
 def _extract_date(text):
     """从文本中提取日期，支持多种格式"""
     if not text:
@@ -735,6 +751,64 @@ def fetch_news(year=None, months=12, max_pages=None, max_items=None, start_date=
         )
 
     if (oldest_seen is None or oldest_seen > start_date) and len(news_items) < max_items:
+        month_pages = _iter_month_list_pages(start_date, end_date, max_index_pages=8)
+        month_archive_hit = False
+        for list_url in month_pages:
+            try:
+                list_html = _fetch_url(list_url)
+            except (HTTPError, URLError, TimeoutError, OSError):
+                continue
+
+            month_items = _parse_list_page(list_html, list_url)
+            if not month_items:
+                continue
+            month_archive_hit = True
+
+            page_collected = []
+            page_oldest = None
+            for item in month_items:
+                if not _is_allowed_source_link(item["source"], item["link"]):
+                    continue
+                published_at = item["published_at"]
+                if not published_at:
+                    continue
+                page_oldest = published_at if page_oldest is None else min(page_oldest, published_at)
+                if published_at > end_date or published_at < start_date:
+                    continue
+                try:
+                    article_html = _fetch_url(item["link"])
+                except (HTTPError, URLError, TimeoutError, OSError):
+                    article_html = ""
+                summary, content, detail_date = _parse_article_detail(article_html) if article_html else ("", "", None)
+                if detail_date:
+                    item["published_at"] = detail_date
+                    item["published"] = detail_date.strftime("%Y-%m-%d")
+                item["summary"] = summary or item["title"]
+                item["content"] = content or summary or item["title"]
+                if not _is_reliable_item(item):
+                    continue
+                page_collected.append(item)
+
+            if progress_callback:
+                progress_callback(
+                    {
+                        "stage": "archive_page",
+                        "page": list_url,
+                        "matched": len(page_collected),
+                        "added_total": len(news_items) + len(page_collected),
+                        "oldest_seen": page_oldest.strftime("%Y-%m-%d") if page_oldest else "",
+                    }
+                )
+
+            if append_items(page_collected):
+                break
+            if page_oldest and page_oldest < start_date:
+                break
+
+        if month_archive_hit:
+            news_items.sort(key=lambda item: item["published_at"], reverse=True)
+            return news_items
+
         consecutive_missing_archives = 0
         for page_number in range(1, max_pages + 1):
             archive_url = _build_archive_url(page_number)

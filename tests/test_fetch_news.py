@@ -10,6 +10,7 @@ from app.fetch_news import (
     _extract_date,
     _fetch_url,
     _is_allowed_source_link,
+    _iter_month_list_pages,
     _load_external_html_sources,
     _load_external_source_feeds,
     _classify_category,
@@ -256,3 +257,12 @@ def test_source_health_callback_for_rss_error(monkeypatch):
     assert len(source_health) == 1
     assert source_health[0]["status"] == "error"
     assert source_health[0]["source"] == "xinhuanet"
+
+
+def test_iter_month_list_pages_builds_month_directories():
+    start = datetime(2025, 1, 1)
+    end = datetime(2025, 3, 31, 23, 59, 59)
+    urls = _iter_month_list_pages(start, end, max_index_pages=2)
+    assert "https://www.gov.cn/yaowen/liebiao/202503/index.htm" in urls
+    assert "https://www.gov.cn/yaowen/liebiao/202503/index_2.htm" in urls
+    assert "https://www.gov.cn/yaowen/liebiao/202501/index.htm" in urls
