@@ -38,8 +38,8 @@ def test_categories_and_sources_pages(client):
     """测试分类页和数据源页"""
     categories_response = client.get("/categories")
     assert categories_response.status_code == 200
-    assert "分类专题" in categories_response.text
-    assert "专题入口和分类专题已经合并" in categories_response.text
+    assert "时政专题" in categories_response.text
+    assert "分类页只保留时政主专题" in categories_response.text
 
     sources_response = client.get("/sources")
     assert sources_response.status_code == 200
@@ -145,8 +145,8 @@ def test_status_page(client):
     assert response.status_code == 200
     assert "同步状态" in response.text
     assert "同步近两年到数据库" in response.text
-    assert "来源覆盖" in response.text
-    assert "同步页只保留任务状态和来源健康" in response.text
+    assert "<h2>来源覆盖</h2>" not in response.text
+    assert "同步页只保留任务状态和告警" in response.text
     assert "来源告警" in response.text
     assert "连续异常来源" in response.text
 

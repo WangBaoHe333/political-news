@@ -11,7 +11,7 @@ def setup_scheduler():
         "cron",
         hour=f"*/{settings.scheduled_sync_interval_hours}",
         minute=0,
-        kwargs={"months": 1, "max_pages": 12, "max_items": 80},
+        kwargs={"months": 1, "max_pages": 24, "max_items": 180},
         id="hourly_news_sync",
         max_instances=1,
         coalesce=True,

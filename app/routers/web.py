@@ -1389,37 +1389,49 @@ async def yesterday_page(
 
 
 @router.get("/categories", response_class=HTMLResponse)
-async def categories_page():
+async def categories_page(
+    page: int = Query(default=1, ge=1),
+    source: Optional[str] = Query(default=None),
+):
     current_year = datetime.now(LOCAL_TZ).year
-    recent_items, _ = query_news(year=None, search=None, months=24)
-    source_counts = _source_counts(recent_items)
-    category_counts = _category_counts(recent_items)
+    shizheng_items, _ = query_news(year=None, search=None, months=24, source=source, category="时政")
+    source_counts = _source_counts(shizheng_items)
+    page_items, current_page, total_pages = _paginate_sequence(shizheng_items, page, ITEMS_PER_PAGE)
     year_counts = get_year_counts(min_year=MIN_FILTER_YEAR)
 
     main_html = (
         "<section class='panel'>"
-        "<div class='panel-head'><div><h2>分类专题</h2><div class='panel-subtitle'>专题入口和分类专题已经合并，这里就是统一的专题主页。</div></div></div>"
-        + _render_category_overview(category_counts)
+        "<div class='panel-head'><div><h2>时政专题</h2><div class='panel-subtitle'>分类页只保留时政主专题，不再堆叠要闻预览等重复模块。</div></div>"
+        f"<span>{len(shizheng_items)} 条</span></div>"
+        + _render_scroll_shell(_render_news_stream(page_items, "当前还没有可展示的时政专题内容。"))
+        + _render_pager("/categories", current_page, total_pages, source=source)
         + "</section>"
-        + _render_category_shelves(recent_items, limit_categories=6, per_category=3)
     )
 
     return _render_layout(
         active_tab="categories",
         hero_title="分类专题",
-        hero_text="分类页只做一件事：把多来源时政按专题聚起来，方便直接进入，不再和首页、来源页重复。",
+        hero_text="分类页只聚焦时政专题，避免重复预览和多入口造成干扰。",
         stats=[
-            ("专题数量", str(len(category_counts))),
+            ("时政专题条数", str(len(shizheng_items))),
             ("数据库总条数", str(count_news_records())),
             ("当前年份", str(current_year)),
-            ("来源数量", str(len([count for count in source_counts.values() if count > 0]))),
+            ("当前来源", source_label(source) if source else "全部来源"),
         ],
         main_html=main_html,
-        side_html=_render_source_health_panel(recent_items),
+        side_html=_shared_sidebar(
+            year_counts,
+            current_year,
+            shizheng_items,
+            source_counts,
+            "/categories",
+            active_source=source,
+        ),
         year_counts=year_counts,
         source_counts=source_counts,
         current_year=current_year,
         selected_year=current_year,
+        selected_source=source,
         page_title="分类专题",
     )
 
@@ -1877,18 +1889,18 @@ async def status_page(sync_status: str = Query(default="")):
     last_sync_at = get_app_state("last_sync_at", "尚未同步")
     last_sync_result = sync_status or get_app_state("last_sync_result", "")
 
-    main_html = _render_sync_panel(task_status, last_sync_at, last_sync_result) + _render_source_health_panel(recent_items)
+    main_html = _render_sync_panel(task_status, last_sync_at, last_sync_result)
     side_html = (
         "<section class='panel'>"
-        "<div class='panel-head'><div><h2>状态说明</h2><div class='panel-subtitle'>同步页只保留任务状态和来源健康，不再复用其他页面的通用模块。</div></div></div>"
-        "<div class='notice compact'><strong>当前用途：</strong>看任务是否在跑、最近一次结果、哪些来源有数据或断流。</div>"
+        "<div class='panel-head'><div><h2>状态说明</h2><div class='panel-subtitle'>同步页只保留任务状态和告警，不再展示来源覆盖。</div></div></div>"
+        "<div class='notice compact'><strong>当前用途：</strong>看任务是否在跑、最近一次结果、以及来源异常告警。</div>"
         "</section>"
     )
 
     return _render_layout(
         active_tab="status",
         hero_title="同步状态",
-        hero_text="同步状态页只负责两件事：任务状态和来源健康。它不再承担专题、搜索或来源导航。",
+        hero_text="同步状态页只负责任务状态与异常告警，不承担来源覆盖和专题展示。",
         stats=[
             ("当前状态", "进行中" if task_status["in_progress"] else "空闲"),
             ("最近同步", last_sync_at),

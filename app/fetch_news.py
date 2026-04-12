@@ -28,76 +28,82 @@ HTTP_TIMEOUT = int(os.getenv("HTTP_TIMEOUT_SECONDS", "30"))
 HTTP_RETRIES = int(os.getenv("HTTP_RETRIES", "2"))
 HTTP_VERIFY_TLS = os.getenv("HTTP_VERIFY_TLS", "1").lower() in {"1", "true", "yes", "on"}
 DEFAULT_MAX_PAGES = int(os.getenv("SYNC_MAX_PAGES", "260"))
-DEFAULT_MAX_ITEMS = int(os.getenv("SYNC_MAX_ITEMS", "400"))
+DEFAULT_MAX_ITEMS = int(os.getenv("SYNC_MAX_ITEMS", "800"))
 CURATED_RSS_SOURCES = [
     {
         "source": "people_cn",
         "category": "时政",
         "feed_url": "https://www.people.com.cn/rss/politics.xml",
         "base_url": "https://politics.people.com.cn/",
-        "max_entries": 20,
+        "max_entries": 60,
     },
     {
         "source": "people_cn",
         "category": "国际",
         "feed_url": "https://www.people.com.cn/rss/world.xml",
         "base_url": "https://world.people.com.cn/",
-        "max_entries": 20,
+        "max_entries": 60,
     },
     {
         "source": "people_cn",
         "category": "港澳台",
         "feed_url": "https://www.people.com.cn/rss/haixia.xml",
         "base_url": "https://tw.people.com.cn/",
-        "max_entries": 20,
+        "max_entries": 40,
     },
     {
         "source": "people_cn",
         "category": "军事",
         "feed_url": "https://www.people.com.cn/rss/military.xml",
         "base_url": "https://military.people.com.cn/",
-        "max_entries": 20,
+        "max_entries": 40,
     },
     {
         "source": "xinhuanet",
         "category": "时政",
         "feed_url": "https://www.xinhuanet.com/politics/news_politics.xml",
         "base_url": "https://www.news.cn/",
-        "max_entries": 24,
+        "max_entries": 80,
     },
     {
         "source": "chinanews",
         "category": "时政",
         "feed_url": "https://www.chinanews.com.cn/rss/china.xml",
         "base_url": "https://www.chinanews.com.cn/",
-        "max_entries": 20,
+        "max_entries": 60,
     },
     {
         "source": "chinanews",
         "category": "国际",
         "feed_url": "https://www.chinanews.com.cn/rss/world.xml",
         "base_url": "https://www.chinanews.com.cn/",
-        "max_entries": 20,
+        "max_entries": 60,
     },
 ]
 CURATED_HTML_SOURCES = [
     {
         "source": "xinhuanet",
         "category": "时政",
-        "list_urls": ["https://www.news.cn/politics/"],
+        "list_urls": [
+            "https://www.news.cn/politics/",
+            "https://www.news.cn/politicspro/",
+        ],
         "base_url": "https://www.news.cn/",
         "link_keywords": ("/politics/",),
         "article_patterns": (".shtml", "/20"),
-        "max_entries": 36,
+        "max_entries": 120,
     },
     {
         "source": "cctv",
         "category": "时政",
-        "list_urls": ["https://news.cctv.com/china/"],
+        "list_urls": [
+            "https://news.cctv.com/china/",
+            "https://news.cctv.com/world/",
+        ],
         "base_url": "https://news.cctv.com/",
         "link_keywords": (),
         "article_patterns": (".shtml", "/20"),
-        "max_entries": 36,
+        "max_entries": 120,
     },
     {
         "source": "mfa",
@@ -107,11 +113,13 @@ CURATED_HTML_SOURCES = [
             "https://www.mfa.gov.cn/web/ttxw/index_1.shtml",
             "https://www.mfa.gov.cn/web/ttxw/index_2.shtml",
             "https://www.mfa.gov.cn/web/ttxw/index_3.shtml",
+            "https://www.mfa.gov.cn/web/ttxw/index_4.shtml",
+            "https://www.mfa.gov.cn/web/ttxw/index_5.shtml",
         ],
         "base_url": "https://www.mfa.gov.cn/",
         "link_keywords": ("/web/ttxw/",),
         "article_patterns": (".shtml",),
-        "max_entries": 40,
+        "max_entries": 120,
     },
 ]
 TRUSTED_SOURCE_RULES = {
