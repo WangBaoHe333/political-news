@@ -1,13 +1,17 @@
 """测试新闻抓取模块（与 app.fetch_news 实现对齐）。"""
 
 from datetime import datetime
+from urllib.error import URLError
 from unittest.mock import patch
 
 import pytest
 
 from app.fetch_news import (
     _extract_date,
+    _fetch_url,
     _is_allowed_source_link,
+    _load_external_html_sources,
+    _load_external_source_feeds,
     _classify_category,
     _normalize_text,
     _target_range,
@@ -151,3 +155,80 @@ def test_fetch_news_discards_untrusted_domain(mock_load, mock_fetch):
 
     items = fetch_news(start_date=datetime(2024, 6, 1), end_date=datetime(2024, 6, 30, 23, 59, 59), max_items=10, max_pages=1)
     assert items == []
+
+
+def test_fetch_url_retries_then_succeeds(monkeypatch):
+    calls = {"count": 0}
+
+    class _Response:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+        def read(self):
+            return b"ok"
+
+    def fake_urlopen(*args, **kwargs):
+        calls["count"] += 1
+        if calls["count"] == 1:
+            raise URLError("temporary failure")
+        return _Response()
+
+    monkeypatch.setattr("app.fetch_news.urlopen", fake_urlopen)
+    monkeypatch.setattr("app.fetch_news.time.sleep", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr("app.fetch_news.HTTP_RETRIES", 1)
+    assert _fetch_url("https://www.gov.cn/test") == "ok"
+    assert calls["count"] == 2
+
+
+def test_source_health_callback_for_empty_rss(monkeypatch):
+    monkeypatch.setattr(
+        "app.fetch_news.CURATED_RSS_SOURCES",
+        [
+            {
+                "source": "people_cn",
+                "category": "时政",
+                "feed_url": "https://example.com/rss.xml",
+                "base_url": "https://www.people.com.cn/",
+                "max_entries": 5,
+            }
+        ],
+    )
+    monkeypatch.setattr("app.fetch_news._fetch_url", lambda _url: "<rss></rss>")
+    monkeypatch.setattr("app.fetch_news._parse_feed_entries", lambda _cfg, _xml: [])
+
+    events = []
+    _load_external_source_feeds(progress_callback=lambda info: events.append(info))
+    source_health = [event for event in events if event.get("stage") == "source_health"]
+
+    assert len(source_health) == 1
+    assert source_health[0]["status"] == "empty"
+    assert source_health[0]["source"] == "people_cn"
+
+
+def test_source_health_callback_for_html_error(monkeypatch):
+    monkeypatch.setattr(
+        "app.fetch_news.CURATED_HTML_SOURCES",
+        [
+            {
+                "source": "mfa",
+                "category": "外交",
+                "list_urls": ["https://example.com/list"],
+                "base_url": "https://www.mfa.gov.cn/",
+                "link_keywords": (),
+                "article_patterns": (".shtml",),
+                "max_entries": 10,
+            }
+        ],
+    )
+    monkeypatch.setattr("app.fetch_news._fetch_url", lambda _url: (_ for _ in ()).throw(URLError("down")))
+
+    events = []
+    _load_external_html_sources(progress_callback=lambda info: events.append(info))
+    source_health = [event for event in events if event.get("stage") == "source_health"]
+
+    assert len(source_health) == 1
+    assert source_health[0]["status"] == "error"
+    assert source_health[0]["source"] == "mfa"

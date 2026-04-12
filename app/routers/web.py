@@ -344,6 +344,12 @@ def _render_sync_panel(task_status: Dict[str, object], last_sync_at: str, last_s
     started_at = task_status["started_at"] or "暂无记录"
     finished_at = task_status["finished_at"] or "暂无记录"
     last_result = last_sync_result or "尚未有成功同步记录。"
+    source_alerts = task_status.get("source_alerts") or []
+    if isinstance(source_alerts, list):
+        source_alerts = [str(item) for item in source_alerts if str(item).strip()]
+    else:
+        source_alerts = []
+    source_alert_text = "；".join(source_alerts)
     busy_class = "status-badge busy" if task_status["in_progress"] else "status-badge"
     sync_admin_token = get_settings().sync_admin_token
     action_html = (
@@ -384,6 +390,7 @@ def _render_sync_panel(task_status: Dict[str, object], last_sync_at: str, last_s
       </div>
       <div class="notice compact" id="sync-message"><strong>当前状态：</strong>{escape(str(message))}</div>
       <div class="notice compact" id="sync-last-result"><strong>最近结果：</strong>{escape(last_result)}</div>
+      <div class="notice compact" id="sync-source-alerts"><strong>来源告警：</strong>{escape(source_alert_text or "无")}</div>
       {action_html}
     </section>
     """
@@ -1209,6 +1216,7 @@ def _render_layout(
             const finishedAt = document.getElementById('sync-finished-at');
             const message = document.getElementById('sync-message');
             const lastResult = document.getElementById('sync-last-result');
+            const sourceAlerts = document.getElementById('sync-source-alerts');
 
             const busy = Boolean(data.in_progress);
             badge.textContent = busy ? '进行中' : '空闲';
@@ -1219,6 +1227,10 @@ def _render_layout(
             if (finishedAt) finishedAt.textContent = data.finished_at || '暂无记录';
             if (message) message.innerHTML = '<strong>当前状态：</strong>' + (data.message || '当前没有运行中的同步任务。');
             if (lastResult) lastResult.innerHTML = '<strong>最近结果：</strong>' + (data.last_result || '尚未有成功同步记录。');
+            if (sourceAlerts) {{
+              const alerts = Array.isArray(data.source_alerts) ? data.source_alerts : [];
+              sourceAlerts.innerHTML = '<strong>来源告警：</strong>' + (alerts.length ? alerts.join('；') : '无');
+            }}
           }} catch (error) {{
             console.warn('sync status refresh failed', error);
           }}

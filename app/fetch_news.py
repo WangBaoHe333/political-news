@@ -489,12 +489,15 @@ def _parse_feed_entries(source_config, raw_xml):
 
 def _load_external_source_feeds(progress_callback=None):
     items = []
-    source_configs = CURATED_RSS_SOURCES
+    source_stats = {}
 
-    for source_config in source_configs:
+    for source_config in CURATED_RSS_SOURCES:
+        source_key = source_config["source"]
+        stat = source_stats.setdefault(source_key, {"matched": 0, "errors": 0})
         try:
             raw_xml = _fetch_url(source_config["feed_url"])
             feed_items = _parse_feed_entries(source_config, raw_xml)
+            stat["matched"] += len(feed_items)
             items.extend(feed_items)
             if progress_callback:
                 progress_callback(
@@ -506,7 +509,33 @@ def _load_external_source_feeds(progress_callback=None):
                     }
                 )
         except (HTTPError, URLError, TimeoutError, OSError, ValueError) as exc:
+            stat["errors"] += 1
             logger.warning("Failed to load feed %s: %s", source_config["feed_url"], exc)
+
+    if progress_callback:
+        for source, stat in source_stats.items():
+            matched = stat["matched"]
+            errors = stat["errors"]
+            if matched > 0:
+                status = "healthy" if errors == 0 else "degraded"
+                note = f"RSS 命中 {matched} 条"
+            elif errors > 0:
+                status = "error"
+                note = "RSS 拉取失败，可能是网络或源站结构变化"
+            else:
+                status = "empty"
+                note = "RSS 返回为空，可能是源站结构变化"
+            progress_callback(
+                {
+                    "stage": "source_health",
+                    "channel": "rss",
+                    "source": source,
+                    "matched": matched,
+                    "errors": errors,
+                    "status": status,
+                    "note": note,
+                }
+            )
     return items
 
 
@@ -514,12 +543,14 @@ def _load_external_html_sources(progress_callback=None):
     items = []
     for source_config in CURATED_HTML_SOURCES:
         source_items = []
+        errors = 0
         for list_url in source_config.get("list_urls", []):
             try:
                 html_text = _fetch_url(list_url)
                 parsed_items = _parse_generic_list_page(html_text, list_url, source_config)
                 source_items.extend(parsed_items)
             except (HTTPError, URLError, TimeoutError, OSError, ValueError) as exc:
+                errors += 1
                 logger.warning("Failed to load source page %s: %s", list_url, exc)
 
         deduped = []
@@ -537,6 +568,26 @@ def _load_external_html_sources(progress_callback=None):
                     "stage": "source_page",
                     "source": source_config["source"],
                     "matched": len(deduped),
+                }
+            )
+            if len(deduped) > 0:
+                status = "healthy" if errors == 0 else "degraded"
+                note = f"HTML 列表命中 {len(deduped)} 条"
+            elif errors > 0:
+                status = "error"
+                note = "HTML 列表拉取失败，可能是网络或源站结构变化"
+            else:
+                status = "empty"
+                note = "HTML 列表解析为空，可能是源站结构变化"
+            progress_callback(
+                {
+                    "stage": "source_health",
+                    "channel": "html",
+                    "source": source_config["source"],
+                    "matched": len(deduped),
+                    "errors": errors,
+                    "status": status,
+                    "note": note,
                 }
             )
     return items

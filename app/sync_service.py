@@ -1,5 +1,6 @@
 """抓取入库与后台同步任务状态。"""
 
+import json
 import logging
 import threading
 from datetime import datetime, timedelta
@@ -16,6 +17,33 @@ SYNC_LOCK = threading.Lock()
 
 def _utc_now_str() -> str:
     return datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")
+
+
+def _parse_alerts(raw: str) -> List[str]:
+    try:
+        parsed = json.loads(raw or "[]")
+        if isinstance(parsed, list):
+            return [str(item) for item in parsed]
+    except (TypeError, ValueError):
+        pass
+    return []
+
+
+def _render_source_alert(info: Dict[str, Any]) -> Optional[str]:
+    if info.get("stage") != "source_health":
+        return None
+    status = info.get("status")
+    if status == "healthy":
+        return None
+    source = str(info.get("source") or "unknown")
+    channel = str(info.get("channel") or "source")
+    note = str(info.get("note") or "来源抓取异常")
+    return f"{source}({channel}): {note}"
+
+
+def _save_source_alerts(alerts: List[str]) -> None:
+    unique_alerts = list(dict.fromkeys(alerts))
+    set_app_state("source_alerts", json.dumps(unique_alerts, ensure_ascii=False))
 
 
 def fetch_and_save_news(
@@ -74,6 +102,7 @@ def get_sync_status() -> Dict[str, Any]:
         "finished_at": get_app_state("sync_finished_at", ""),
         "last_sync_at": get_app_state("last_sync_at", ""),
         "last_result": get_app_state("last_sync_result", ""),
+        "source_alerts": _parse_alerts(get_app_state("source_alerts", "[]")),
     }
 
 
@@ -126,9 +155,20 @@ def _run_background_sync(
     max_pages: Optional[int] = None,
     max_items: Optional[int] = None,
 ) -> None:
+    source_alerts: List[str] = []
+
+    def on_progress(info: Dict[str, Any]) -> None:
+        alert = _render_source_alert(info)
+        if alert:
+            source_alerts.append(alert)
+
     try:
         result = fetch_and_save_news(
-            year=year, months=months, max_pages=max_pages, max_items=max_items
+            year=year,
+            months=months,
+            max_pages=max_pages,
+            max_items=max_items,
+            progress_callback=on_progress,
         )
         set_app_state(
             "sync_message",
@@ -138,6 +178,7 @@ def _run_background_sync(
         logger.exception("Background sync failed: %s", exc)
         set_app_state("sync_message", f"{scope_label}后台回填失败：{exc}")
     finally:
+        _save_source_alerts(source_alerts)
         set_app_state("sync_finished_at", _utc_now_str())
         set_app_state("sync_in_progress", "0")
         SYNC_LOCK.release()
@@ -185,6 +226,7 @@ def _run_batched_backfill(
     completed = 0
     total_fetched = 0
     total_saved = 0
+    source_alerts: List[str] = []
     try:
         for start, end, months in month_batches(total_months, batch_size=batch_size):
             label = f"{start.strftime('%Y-%m')} 至 {end.strftime('%Y-%m')}"
@@ -207,6 +249,10 @@ def _run_batched_backfill(
                         "sync_message",
                         f"{scope_label}后台回填进行中：{label}，近期 JSON 命中 {info.get('collected', 0)} 条。",
                     )
+                else:
+                    alert = _render_source_alert(info)
+                    if alert:
+                        source_alerts.append(alert)
 
             result = fetch_and_save_news(
                 start_date=start,
@@ -231,6 +277,7 @@ def _run_batched_backfill(
         logger.exception("Batched backfill failed: %s", exc)
         set_app_state("sync_message", f"{scope_label}后台回填失败：{exc}")
     finally:
+        _save_source_alerts(source_alerts)
         set_app_state("sync_finished_at", _utc_now_str())
         set_app_state("sync_in_progress", "0")
         SYNC_LOCK.release()
@@ -251,12 +298,20 @@ def run_sync_now(
     set_app_state("sync_started_at", _utc_now_str())
     set_app_state("sync_finished_at", "")
     set_app_state("sync_message", f"{scope_label}进行中，请稍候。")
+    source_alerts: List[str] = []
+
+    def on_progress(info: Dict[str, Any]) -> None:
+        alert = _render_source_alert(info)
+        if alert:
+            source_alerts.append(alert)
+
     try:
         result = fetch_and_save_news(
             year=year,
             months=months,
             max_pages=max_pages,
             max_items=max_items,
+            progress_callback=on_progress,
         )
         set_app_state(
             "sync_message",
@@ -268,6 +323,7 @@ def run_sync_now(
         set_app_state("sync_message", f"{scope_label}失败：{exc}")
         raise
     finally:
+        _save_source_alerts(source_alerts)
         set_app_state("sync_finished_at", _utc_now_str())
         set_app_state("sync_in_progress", "0")
         SYNC_LOCK.release()
