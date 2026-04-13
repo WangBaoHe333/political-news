@@ -1,8 +1,9 @@
 """同步与回填相关路由。"""
 
-from datetime import datetime, timezone
+from datetime import datetime
 from typing import Optional
 from urllib.parse import quote
+from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, Header, Query
 from fastapi import HTTPException
@@ -17,6 +18,7 @@ from app.sync_service import (
 )
 
 router = APIRouter(tags=["同步"])
+LOCAL_TZ = ZoneInfo("Asia/Shanghai")
 
 
 def _ensure_sync_token(token: Optional[str]) -> None:
@@ -99,8 +101,9 @@ async def backfill_view(
 
 @router.get("/health")
 async def health_check():
-    """健康检查（根路径，兼容负载均衡与旧文档）。"""
+    """健康检查（北京时间）。"""
     return {
         "status": "healthy",
-        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "timestamp": datetime.now(LOCAL_TZ).isoformat(),
+        "timezone": "Asia/Shanghai",
     }

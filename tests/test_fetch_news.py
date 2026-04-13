@@ -7,13 +7,14 @@ from unittest.mock import patch
 import pytest
 
 from app.fetch_news import (
-    _people_archive_urls,
+    _extract_date_from_url,
     _extract_date,
     _fetch_url,
     _is_allowed_source_link,
     _iter_month_list_pages,
     _load_external_html_sources,
     _load_external_source_feeds,
+    _people_archive_urls,
     _classify_category,
     _normalize_text,
     _target_range,
@@ -44,6 +45,12 @@ def test_extract_date_invalid_or_empty():
     assert _extract_date("无效日期无年份") is None
 
 
+def test_extract_date_from_url():
+    assert _extract_date_from_url("https://politics.people.com.cn/n1/2025/0108/c1024-40412345.html") == datetime(2025, 1, 8)
+    assert _extract_date_from_url("https://www.news.cn/politics/2026-04/13/c_112233.htm") == datetime(2026, 4, 13)
+    assert _extract_date_from_url("https://example.com/no-date") is None
+
+
 def test_allowed_source_link_uses_whitelist():
     assert _is_allowed_source_link("gov_cn", "https://www.gov.cn/yaowen/test.htm")
     assert _is_allowed_source_link("xinhuanet", "https://www.news.cn/politics/test.htm")
@@ -70,6 +77,22 @@ def test_target_range_explicit_dates():
     b = datetime(2024, 6, 30, 23, 59, 59)
     start, end = _target_range(start_date=a, end_date=b)
     assert start == a and end == b
+
+
+def test_iter_month_list_pages_builds_month_directories():
+    start = datetime(2025, 1, 1)
+    end = datetime(2025, 3, 31, 23, 59, 59)
+    urls = _iter_month_list_pages(start, end, max_index_pages=2)
+    assert "https://www.gov.cn/yaowen/liebiao/202503/index.htm" in urls
+    assert "https://www.gov.cn/yaowen/liebiao/202503/index_2.htm" in urls
+    assert "https://www.gov.cn/yaowen/liebiao/202501/index.htm" in urls
+
+
+def test_people_archive_urls_build_expected_pages():
+    urls = _people_archive_urls(5)
+    assert urls[0] == "https://politics.people.com.cn/GB/1024/index.html"
+    assert "https://politics.people.com.cn/GB/1024/index2.html" in urls
+    assert "https://politics.people.com.cn/GB/1024/index5.html" in urls
 
 
 @patch("app.fetch_news._fetch_url")
@@ -157,6 +180,34 @@ def test_fetch_news_discards_untrusted_domain(mock_load, mock_fetch):
 
     items = fetch_news(start_date=datetime(2024, 6, 1), end_date=datetime(2024, 6, 30, 23, 59, 59), max_items=10, max_pages=1)
     assert items == []
+
+
+@patch("app.fetch_news._fetch_url")
+@patch("app.fetch_news._load_json_feed")
+def test_fetch_news_uses_url_date_fallback(mock_load, mock_fetch):
+    mock_load.return_value = [
+        {
+            "source": "people_cn",
+            "category": "时政",
+            "title": "带日期链接的测试文章",
+            "link": "https://politics.people.com.cn/n1/2025/0108/c1024-40412345.html",
+            "published": "",
+            "published_at": None,
+            "summary": "",
+            "content": "",
+        }
+    ]
+    mock_fetch.return_value = "<html><body><p>这是一段足够长的测试正文内容，用于验证链接日期兜底逻辑能够生效。</p></body></html>"
+
+    items = fetch_news(
+        start_date=datetime(2025, 1, 1),
+        end_date=datetime(2025, 1, 31, 23, 59, 59),
+        max_items=10,
+        max_pages=1,
+    )
+
+    assert len(items) == 1
+    assert items[0]["published_at"] == datetime(2025, 1, 8)
 
 
 def test_fetch_url_retries_then_succeeds(monkeypatch):
@@ -258,19 +309,3 @@ def test_source_health_callback_for_rss_error(monkeypatch):
     assert len(source_health) == 1
     assert source_health[0]["status"] == "error"
     assert source_health[0]["source"] == "xinhuanet"
-
-
-def test_iter_month_list_pages_builds_month_directories():
-    start = datetime(2025, 1, 1)
-    end = datetime(2025, 3, 31, 23, 59, 59)
-    urls = _iter_month_list_pages(start, end, max_index_pages=2)
-    assert "https://www.gov.cn/yaowen/liebiao/202503/index.htm" in urls
-    assert "https://www.gov.cn/yaowen/liebiao/202503/index_2.htm" in urls
-    assert "https://www.gov.cn/yaowen/liebiao/202501/index.htm" in urls
-
-
-def test_people_archive_urls_build_expected_pages():
-    urls = _people_archive_urls(5)
-    assert urls[0] == "https://politics.people.com.cn/GB/1024/index.html"
-    assert "https://politics.people.com.cn/GB/1024/index2.html" in urls
-    assert "https://politics.people.com.cn/GB/1024/index5.html" in urls

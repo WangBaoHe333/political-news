@@ -175,7 +175,7 @@ def has_recent_two_years_data(months: int = 24) -> bool:
         if not oldest or not latest:
             return False
 
-        now = datetime.utcnow()
+        now = datetime.now(LOCAL_TZ).replace(tzinfo=None)
         cutoff = now - timedelta(days=max(months, 1) * 30 - 14)
         required_years = {now.year, now.year - 1}
 
@@ -244,7 +244,7 @@ def _run_background_sync(
 
 
 def month_batches(total_months: int, batch_size: int = 3) -> List[Tuple[datetime, datetime, int]]:
-    now = datetime.utcnow().replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+    now = datetime.now(LOCAL_TZ).replace(day=1, hour=0, minute=0, second=0, microsecond=0, tzinfo=None)
     batches: List[Tuple[datetime, datetime, int]] = []
     remaining = total_months
     current_end = now

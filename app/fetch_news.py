@@ -10,6 +10,7 @@ from html import unescape
 from urllib.error import HTTPError, URLError
 from urllib.parse import urljoin, urlparse
 from urllib.request import Request, urlopen
+from zoneinfo import ZoneInfo
 
 from bs4 import BeautifulSoup
 import feedparser
@@ -29,6 +30,7 @@ HTTP_RETRIES = int(os.getenv("HTTP_RETRIES", "2"))
 HTTP_VERIFY_TLS = os.getenv("HTTP_VERIFY_TLS", "1").lower() in {"1", "true", "yes", "on"}
 DEFAULT_MAX_PAGES = int(os.getenv("SYNC_MAX_PAGES", "260"))
 DEFAULT_MAX_ITEMS = int(os.getenv("SYNC_MAX_ITEMS", "800"))
+LOCAL_TZ = ZoneInfo("Asia/Shanghai")
 
 
 def _people_archive_urls(max_pages=30):
@@ -205,7 +207,7 @@ def _is_reliable_item(item):
     published_at = item.get("published_at")
     if not published_at:
         return False
-    if published_at > datetime.utcnow() + timedelta(days=1):
+    if published_at > datetime.now(LOCAL_TZ).replace(tzinfo=None) + timedelta(days=1):
         return False
     if not _is_allowed_source_link(item.get("source"), item.get("link", "")):
         return False
@@ -305,6 +307,31 @@ def _extract_date(text):
             return datetime(year, month, day)
         except ValueError:
             continue
+
+    return None
+
+
+def _extract_date_from_url(url):
+    parsed = urlparse(url or "")
+    path = parsed.path or ""
+
+    match = re.search(r"/(20\d{2})/(\d{2})(\d{2})/", path)
+    if match:
+        year, month, day = map(int, match.groups())
+        try:
+            return datetime(year, month, day)
+        except ValueError:
+            return None
+
+    match = re.search(r"(20\d{2})[/-](\d{1,2})(?:[/-](\d{1,2}))?", path)
+    if match:
+        year = int(match.group(1))
+        month = int(match.group(2))
+        day = int(match.group(3) or "1")
+        try:
+            return datetime(year, month, day)
+        except ValueError:
+            return None
 
     return None
 
@@ -683,7 +710,16 @@ def _parse_article_detail(html_text):
             continue
         paragraphs.append(text)
 
-    content = "\n".join(paragraphs[:20])
+    # 站内只保留导读与有限节选，避免直接镜像原站全文。
+    content_parts = []
+    total_chars = 0
+    for paragraph in paragraphs[:8]:
+        total_chars += len(paragraph)
+        if total_chars > 1200:
+            break
+        content_parts.append(paragraph)
+
+    content = "\n".join(content_parts)
     summary = paragraphs[0] if paragraphs else ""
     return summary, content, published_at
 
@@ -691,7 +727,7 @@ def _parse_article_detail(html_text):
 def _target_range(year=None, months=12, start_date=None, end_date=None):
     if start_date and end_date:
         return start_date, end_date
-    now = datetime.utcnow()
+    now = datetime.now(LOCAL_TZ).replace(tzinfo=None)
     if year:
         return datetime(year, 1, 1), datetime(year, 12, 31, 23, 59, 59)
     start = now - timedelta(days=max(months, 1) * 30)
@@ -731,6 +767,7 @@ def fetch_news(year=None, months=12, max_pages=None, max_items=None, start_date=
     for item in page_items:
         if not _is_allowed_source_link(item["source"], item["link"]):
             continue
+        article_html = ""
         published_at = item["published_at"]
         if not published_at:
             try:
@@ -740,6 +777,8 @@ def fetch_news(year=None, months=12, max_pages=None, max_items=None, start_date=
                 article_html = ""
             _, _, detail_date = _parse_article_detail(article_html) if article_html else ("", "", None)
             published_at = detail_date
+            if not published_at:
+                published_at = _extract_date_from_url(item["link"])
             if not published_at:
                 continue
             item["published_at"] = published_at
@@ -752,11 +791,12 @@ def fetch_news(year=None, months=12, max_pages=None, max_items=None, start_date=
 
         oldest_seen = published_at if oldest_seen is None else min(oldest_seen, published_at)
 
-        try:
-            article_html = _fetch_url(item["link"])
-        except (HTTPError, URLError, TimeoutError, OSError) as exc:
-            logger.warning("Failed to fetch article %s: %s", item["link"], exc)
-            article_html = ""
+        if not article_html:
+            try:
+                article_html = _fetch_url(item["link"])
+            except (HTTPError, URLError, TimeoutError, OSError) as exc:
+                logger.warning("Failed to fetch article %s: %s", item["link"], exc)
+                article_html = ""
 
         summary, content, detail_date = _parse_article_detail(article_html) if article_html else ("", "", None)
         if detail_date:
@@ -800,6 +840,11 @@ def fetch_news(year=None, months=12, max_pages=None, max_items=None, start_date=
                 if not _is_allowed_source_link(item["source"], item["link"]):
                     continue
                 published_at = item["published_at"]
+                if not published_at:
+                    published_at = _extract_date_from_url(item["link"])
+                    if published_at:
+                        item["published_at"] = published_at
+                        item["published"] = published_at.strftime("%Y-%m-%d")
                 if not published_at:
                     continue
                 page_oldest = published_at if page_oldest is None else min(page_oldest, published_at)
@@ -873,6 +918,11 @@ def fetch_news(year=None, months=12, max_pages=None, max_items=None, start_date=
                 if not _is_allowed_source_link(item["source"], item["link"]):
                     continue
                 published_at = item["published_at"]
+                if not published_at:
+                    published_at = _extract_date_from_url(item["link"])
+                    if published_at:
+                        item["published_at"] = published_at
+                        item["published"] = published_at.strftime("%Y-%m-%d")
                 if not published_at:
                     continue
                 page_oldest = published_at if page_oldest is None else min(page_oldest, published_at)

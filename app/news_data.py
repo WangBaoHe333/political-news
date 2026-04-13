@@ -10,6 +10,8 @@ from sqlalchemy import func, or_
 from app.database import SessionLocal
 from app.models import News
 
+LOCAL_TZ = ZoneInfo("Asia/Shanghai")
+
 SOURCE_LABELS = {
     "gov_cn": "中国政府网",
     "people_cn": "人民网",
@@ -89,7 +91,7 @@ def query_news(
         if year:
             query = query.filter(News.year == year)
         elif months is not None:
-            start_date = datetime.utcnow() - timedelta(days=max(months, 1) * 30)
+            start_date = datetime.now(LOCAL_TZ).replace(tzinfo=None) - timedelta(days=max(months, 1) * 30)
             query = query.filter(News.published_at >= start_date)
 
         search_filter = _build_search_filter(search or "")
@@ -243,4 +245,3 @@ def attach_isoformat_published_at(items: List[Dict[str, Any]]) -> List[Dict[str,
         if isinstance(pa, datetime):
             item["published_at"] = pa.isoformat()
     return items
-LOCAL_TZ = ZoneInfo("Asia/Shanghai")
