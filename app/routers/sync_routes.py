@@ -1,7 +1,7 @@
 """同步与回填相关路由。"""
 
 from datetime import datetime
-from typing import Optional
+from typing import Any, Dict, Optional
 from urllib.parse import quote
 from zoneinfo import ZoneInfo
 
@@ -26,7 +26,7 @@ def _ensure_sync_token(token: Optional[str]) -> None:
     if not required_token:
         return
     if token != required_token:
-        raise HTTPException(status_code=403, detail="同步接口需要管理员令牌。")
+        raise HTTPException(status_code=403, detail="同步接口��要管理员令牌。")
 
 
 @router.get("/sync")
@@ -37,7 +37,7 @@ async def sync_news(
     max_items: Optional[int] = Query(default=None, ge=1, le=1000),
     token: Optional[str] = Query(default=None),
     x_sync_token: Optional[str] = Header(default=None, alias="X-Sync-Token"),
-):
+) -> JSONResponse:
     _ensure_sync_token(x_sync_token or token)
     try:
         result = run_sync_now(
@@ -63,7 +63,7 @@ async def sync_view(
     max_items: Optional[int] = Query(default=None, ge=1, le=1000),
     token: Optional[str] = Query(default=None),
     x_sync_token: Optional[str] = Header(default=None, alias="X-Sync-Token"),
-):
+) -> RedirectResponse:
     _ensure_sync_token(x_sync_token or token)
     scope = f"{year}年" if year else f"近{months}个月"
     started = start_background_sync(scope, year=year, months=months, max_pages=max_pages, max_items=max_items)
@@ -76,7 +76,7 @@ async def sync_view(
 
 
 @router.get("/sync-status")
-async def sync_status_route():
+async def sync_status_route() -> JSONResponse:
     return JSONResponse(get_sync_status())
 
 
@@ -87,7 +87,7 @@ async def backfill_view(
     max_items: int = Query(default=150, ge=20, le=400),
     token: Optional[str] = Query(default=None),
     x_sync_token: Optional[str] = Header(default=None, alias="X-Sync-Token"),
-):
+) -> RedirectResponse:
     _ensure_sync_token(x_sync_token or token)
     scope = f"近{months}个月分批回填"
     started = start_batched_backfill(scope, total_months=months, batch_size=batch_size, max_items=max_items)
@@ -100,7 +100,7 @@ async def backfill_view(
 
 
 @router.get("/health")
-async def health_check():
+async def health_check() -> Dict[str, Any]:
     """健康检查（北京时间）。"""
     return {
         "status": "healthy",
