@@ -7,6 +7,7 @@ import random
 import ssl
 from datetime import datetime, timedelta
 from html import unescape
+from typing import Any, Callable, Dict, List, Optional, Tuple
 from urllib.error import HTTPError, URLError
 from urllib.parse import urljoin, urlparse
 from urllib.request import Request, urlopen
@@ -33,7 +34,7 @@ DEFAULT_MAX_ITEMS = int(os.getenv("SYNC_MAX_ITEMS", "800"))
 LOCAL_TZ = ZoneInfo("Asia/Shanghai")
 
 
-def _people_archive_urls(max_pages=30):
+def _people_archive_urls(max_pages: int = 30) -> List[str]:
     urls = ["https://politics.people.com.cn/GB/1024/index.html"]
     for idx in range(2, max_pages + 1):
         urls.append(f"https://politics.people.com.cn/GB/1024/index{idx}.html")
@@ -182,20 +183,20 @@ TRUSTED_SOURCE_RULES = {
 }
 
 
-def _normalize_text(value):
+def _normalize_text(value: str | None) -> str:
     value = unescape(value or "")
     value = re.sub(r"\s+", " ", value)
     return value.strip()
 
 
-def _hostname_matches(hostname, allowed_domains):
+def _hostname_matches(hostname: str | None, allowed_domains: Tuple[str, ...]) -> bool:
     if not hostname:
         return False
     hostname = hostname.lower()
     return any(hostname == domain or hostname.endswith(f".{domain}") for domain in allowed_domains)
 
 
-def _is_allowed_source_link(source, link):
+def _is_allowed_source_link(source: str | None, link: str) -> bool:
     rule = TRUSTED_SOURCE_RULES.get(source)
     if not rule:
         return False
@@ -203,7 +204,7 @@ def _is_allowed_source_link(source, link):
     return _hostname_matches(parsed.hostname, rule["domains"])
 
 
-def _is_reliable_item(item):
+def _is_reliable_item(item: Dict[str, Any]) -> bool:
     published_at = item.get("published_at")
     if not published_at:
         return False
@@ -218,8 +219,8 @@ def _is_reliable_item(item):
     return len(content) >= min_length or len(summary) >= min_length
 
 
-def _fetch_url(url):
-    last_error = None
+def _fetch_url(url: str) -> str:
+    last_error: Exception | None = None
     context = ssl.create_default_context() if HTTP_VERIFY_TLS else ssl._create_unverified_context()
     for attempt in range(HTTP_RETRIES + 1):
         try:
@@ -236,17 +237,19 @@ def _fetch_url(url):
             delay = base_delay * (2 ** attempt) + random.uniform(0, base_delay * 0.1)
             logger.info("Retry %d for %s after %.2f seconds: %s", attempt + 1, url, delay, exc)
             time.sleep(delay)
+    if last_error is None:
+        raise RuntimeError("Unknown error in _fetch_url")
     raise last_error
 
 
-def _build_archive_url(page_number):
+def _build_archive_url(page_number: int) -> str:
     return urljoin(LIST_ARCHIVE_BASE_URL, f"home_{page_number}.htm")
 
 
-def _iter_month_list_pages(start_date, end_date, max_index_pages=8):
+def _iter_month_list_pages(start_date: datetime, end_date: datetime, max_index_pages: int = 8) -> List[str]:
     current = datetime(end_date.year, end_date.month, 1)
     start_month = datetime(start_date.year, start_date.month, 1)
-    pages = []
+    pages: List[str] = []
     while current >= start_month:
         month_tag = current.strftime("%Y%m")
         pages.append(urljoin(LIST_ARCHIVE_BASE_URL, f"{month_tag}/index.htm"))
@@ -259,7 +262,7 @@ def _iter_month_list_pages(start_date, end_date, max_index_pages=8):
     return pages
 
 
-def _extract_date(text):
+def _extract_date(text: str | None) -> datetime | None:
     """从文本中提取日期，支持多种格式"""
     if not text:
         return None
@@ -311,7 +314,7 @@ def _extract_date(text):
     return None
 
 
-def _extract_date_from_url(url):
+def _extract_date_from_url(url: str | None) -> datetime | None:
     parsed = urlparse(url or "")
     path = parsed.path or ""
 
@@ -336,7 +339,7 @@ def _extract_date_from_url(url):
     return None
 
 
-def _classify_category(source, default_category, title):
+def _classify_category(source: str, default_category: str | None, title: str) -> str:
     normalized_title = _normalize_text(title)
     if source == "mfa":
         return "外交"
@@ -352,17 +355,17 @@ def _classify_category(source, default_category, title):
     return default_category or DEFAULT_CATEGORY
 
 
-def _parse_generic_list_page(html_text, page_url, source_config):
+def _parse_generic_list_page(html_text: str, page_url: str, source_config: Dict[str, Any]) -> List[Dict[str, Any]]:
     soup = BeautifulSoup(html_text, "html.parser")
-    results = []
-    seen_links = set()
+    results: List[Dict[str, Any]] = []
+    seen_links: set[str] = set()
     link_keywords = source_config.get("link_keywords", ())
     article_patterns = source_config.get("article_patterns", ())
     max_entries = source_config.get("max_entries", 30)
 
-    def find_date_for_anchor(anchor):
-        candidates = []
-        next_text = []
+    def find_date_for_anchor(anchor: Any) -> datetime | None:
+        candidates: List[str] = []
+        next_text: List[str] = []
         for sibling in list(anchor.next_siblings)[:6]:
             if hasattr(sibling, "get_text"):
                 text = _normalize_text(sibling.get_text(" ", strip=True))
@@ -419,15 +422,15 @@ def _parse_generic_list_page(html_text, page_url, source_config):
     return results
 
 
-def _parse_list_page(html_text, page_url):
+def _parse_list_page(html_text: str, page_url: str) -> List[Dict[str, Any]]:
     soup = BeautifulSoup(html_text, "html.parser")
-    results = []
-    seen_links = set()
+    results: List[Dict[str, Any]] = []
+    seen_links: set[str] = set()
 
-    def find_date_for_anchor(anchor):
-        candidates = []
+    def find_date_for_anchor(anchor: Any) -> datetime | None:
+        candidates: List[str] = []
 
-        next_text = []
+        next_text: List[str] = []
         for sibling in list(anchor.next_siblings)[:6]:
             text = _normalize_text(getattr(sibling, "get_text", lambda *args, **kwargs: str(sibling))(" ", strip=True) if hasattr(sibling, "get_text") else str(sibling))
             if text:
@@ -481,13 +484,13 @@ def _parse_list_page(html_text, page_url):
     return results
 
 
-def _load_json_feed():
+def _load_json_feed() -> List[Dict[str, Any]]:
     raw = _fetch_url(LIST_JSON_URL)
     payload = json.loads(raw)
     if not isinstance(payload, list):
         return []
 
-    items = []
+    items: List[Dict[str, Any]] = []
     for entry in payload:
         if not isinstance(entry, dict):
             continue
@@ -520,9 +523,9 @@ def _load_json_feed():
     return items
 
 
-def _parse_feed_entries(source_config, raw_xml):
+def _parse_feed_entries(source_config: Dict[str, Any], raw_xml: str) -> List[Dict[str, Any]]:
     parsed = feedparser.parse(raw_xml.encode("utf-8"))
-    items = []
+    items: List[Dict[str, Any]] = []
     for entry in parsed.entries[: source_config.get("max_entries", 20)]:
         title = _normalize_text(entry.get("title", ""))
         href = entry.get("link", "")
@@ -568,9 +571,9 @@ def _parse_feed_entries(source_config, raw_xml):
     return items
 
 
-def _load_external_source_feeds(progress_callback=None):
-    items = []
-    source_stats = {}
+def _load_external_source_feeds(progress_callback: Callable[[Dict[str, Any]], None] | None = None) -> List[Dict[str, Any]]:
+    items: List[Dict[str, Any]] = []
+    source_stats: Dict[str, Dict[str, int]] = {}
 
     for source_config in CURATED_RSS_SOURCES:
         source_key = source_config["source"]
@@ -620,10 +623,10 @@ def _load_external_source_feeds(progress_callback=None):
     return items
 
 
-def _load_external_html_sources(progress_callback=None):
-    items = []
+def _load_external_html_sources(progress_callback: Callable[[Dict[str, Any]], None] | None = None) -> List[Dict[str, Any]]:
+    items: List[Dict[str, Any]] = []
     for source_config in CURATED_HTML_SOURCES:
-        source_items = []
+        source_items: List[Dict[str, Any]] = []
         errors = 0
         for list_url in source_config.get("list_urls", []):
             try:
@@ -634,8 +637,8 @@ def _load_external_html_sources(progress_callback=None):
                 errors += 1
                 logger.warning("Failed to load source page %s: %s", list_url, exc)
 
-        deduped = []
-        seen_links = set()
+        deduped: List[Dict[str, Any]] = []
+        seen_links: set[str] = set()
         for item in source_items:
             if item["link"] in seen_links:
                 continue
@@ -674,11 +677,11 @@ def _load_external_html_sources(progress_callback=None):
     return items
 
 
-def _parse_article_detail(html_text):
+def _parse_article_detail(html_text: str) -> Tuple[str, str, datetime | None]:
     soup = BeautifulSoup(html_text, "html.parser")
     full_text = _normalize_text(soup.get_text(" ", strip=True))
     published_at = _extract_date(full_text)
-    blocks = []
+    blocks: List[Any] = []
     selectors = [
         ".pages_content p",
         ".rm_txt_con p",
@@ -701,7 +704,7 @@ def _parse_article_detail(html_text):
     if not blocks:
         blocks = soup.find_all("p")
 
-    paragraphs = []
+    paragraphs: List[str] = []
     for block in blocks:
         text = _normalize_text(block.get_text(" ", strip=True))
         if len(text) < 10:
@@ -711,7 +714,7 @@ def _parse_article_detail(html_text):
         paragraphs.append(text)
 
     # 站内只保留导读与有限节选，避免直接镜像原站全文。
-    content_parts = []
+    content_parts: List[str] = []
     total_chars = 0
     for paragraph in paragraphs[:8]:
         total_chars += len(paragraph)
@@ -724,7 +727,7 @@ def _parse_article_detail(html_text):
     return summary, content, published_at
 
 
-def _target_range(year=None, months=12, start_date=None, end_date=None):
+def _target_range(year: int | None = None, months: int = 12, start_date: datetime | None = None, end_date: datetime | None = None) -> Tuple[datetime, datetime]:
     if start_date and end_date:
         return start_date, end_date
     now = datetime.now(LOCAL_TZ).replace(tzinfo=None)
@@ -734,15 +737,15 @@ def _target_range(year=None, months=12, start_date=None, end_date=None):
     return start, now
 
 
-def fetch_news(year=None, months=12, max_pages=None, max_items=None, start_date=None, end_date=None, progress_callback=None):
+def fetch_news(year: int | None = None, months: int = 12, max_pages: int | None = None, max_items: int | None = None, start_date: datetime | None = None, end_date: datetime | None = None, progress_callback: Callable[[Dict[str, Any]], None] | None = None) -> List[Dict[str, Any]]:
     max_pages = max_pages or DEFAULT_MAX_PAGES
     max_items = max_items or DEFAULT_MAX_ITEMS
     start_date, end_date = _target_range(year=year, months=months, start_date=start_date, end_date=end_date)
 
-    news_items = []
-    seen_links = set()
+    news_items: List[Dict[str, Any]] = []
+    seen_links: set[str] = set()
 
-    def append_items(items):
+    def append_items(items: List[Dict[str, Any]]) -> bool:
         for item in items:
             if item["link"] in seen_links:
                 continue
@@ -761,8 +764,8 @@ def fetch_news(year=None, months=12, max_pages=None, max_items=None, start_date=
     page_items.extend(_load_external_source_feeds(progress_callback=progress_callback))
     page_items.extend(_load_external_html_sources(progress_callback=progress_callback))
 
-    collected = []
-    oldest_seen = None
+    collected: List[Dict[str, Any]] = []
+    oldest_seen: datetime | None = None
 
     for item in page_items:
         if not _is_allowed_source_link(item["source"], item["link"]):
@@ -834,8 +837,8 @@ def fetch_news(year=None, months=12, max_pages=None, max_items=None, start_date=
                 continue
             month_archive_hit = True
 
-            page_collected = []
-            page_oldest = None
+            page_collected: List[Dict[str, Any]] = []
+            page_oldest: datetime | None = None
             for item in month_items:
                 if not _is_allowed_source_link(item["source"], item["link"]):
                     continue
@@ -913,7 +916,7 @@ def fetch_news(year=None, months=12, max_pages=None, max_items=None, start_date=
                 continue
 
             page_collected = []
-            page_oldest = None
+            page_oldest: datetime | None = None
             for item in archive_items:
                 if not _is_allowed_source_link(item["source"], item["link"]):
                     continue
@@ -970,7 +973,7 @@ def fetch_news(year=None, months=12, max_pages=None, max_items=None, start_date=
     return news_items
 
 
-def save_news_to_db(news_items):
+def save_news_to_db(news_items: List[Dict[str, Any]]) -> int:
     db = SessionLocal()
     saved_count = 0
 
