@@ -28,7 +28,7 @@ async def api_news(
     source: Optional[str] = Query(default=None, description="按来源筛选"),
     category: Optional[str] = Query(default=None, description="按时政分类筛选"),
     months: int = Query(default=24, ge=1, le=36),
-):
+) -> JSONResponse:
     news_items, years = query_news(year=year, search=q, months=months, source=source, category=category)
     data = news_as_dict(news_items)
     attach_isoformat_published_at(data)
@@ -38,7 +38,7 @@ async def api_news(
 
 
 @router.get("/news/today")
-async def api_news_today():
+async def api_news_today() -> JSONResponse:
     news_items, _ = query_news(year=None, months=24)
     today_items, today_title = today_news(news_items)
     data = news_as_dict(today_items)
@@ -47,7 +47,7 @@ async def api_news_today():
 
 
 @router.get("/news/yesterday")
-async def api_news_yesterday():
+async def api_news_yesterday() -> JSONResponse:
     news_items, _ = query_news(year=None, months=24)
     yesterday_items, yesterday_title = yesterday_news(news_items)
     data = news_as_dict(yesterday_items)
@@ -62,7 +62,7 @@ async def api_news_grouped_by_month(
     source: Optional[str] = Query(default=None, description="按来源筛选"),
     category: Optional[str] = Query(default=None, description="按时政分类筛选"),
     months: int = Query(default=24, ge=1, le=36),
-):
+) -> JSONResponse:
     news_items, years = query_news(year=year, search=q, months=months, source=source, category=category)
     grouped = group_by_month(news_items)
     result: Dict[str, List[Dict[str, Any]]] = {}
@@ -82,7 +82,7 @@ async def api_news_grouped_by_month(
 
 
 @router.get("/news/past-two-years")
-async def api_news_past_two_years():
+async def api_news_past_two_years() -> JSONResponse:
     current_year = datetime.now(LOCAL_TZ).year
     all_items = []
     for year in [current_year, current_year - 1]:
