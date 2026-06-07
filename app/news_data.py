@@ -60,7 +60,7 @@ CATEGORY_ALIASES = {
 }
 
 
-def _build_search_filter(query_text: str):
+def _build_search_filter(query_text: str) -> Any:
     normalized = (query_text or "").strip()
     if not normalized:
         return None
@@ -119,36 +119,36 @@ def get_news_by_id(news_id: int) -> Optional[News]:
         db.close()
 
 
-def source_label(source: Optional[str]) -> str:
+def source_label(source: str | None) -> str:
     if not source:
         return "未知来源"
     return SOURCE_LABELS.get(source, source)
 
 
-def source_trust_label(source: Optional[str]) -> str:
+def source_trust_label(source: str | None) -> str:
     if not source:
         return "来源待确认"
     return SOURCE_TRUST_LABELS.get(source, "来源待确认")
 
 
-def source_trust_note(source: Optional[str]) -> str:
+def source_trust_note(source: str | None) -> str:
     if not source:
         return "请以原文链接为准。"
     return SOURCE_TRUST_NOTES.get(source, "请以原文链接为准。")
 
 
-def normalize_category(category: Optional[str]) -> str:
+def normalize_category(category: str | None) -> str:
     value = (category or "").strip()
     if not value:
         return "时政"
     return CATEGORY_ALIASES.get(value, value)
 
 
-def category_label(category: Optional[str]) -> str:
+def category_label(category: str | None) -> str:
     return normalize_category(category)
 
 
-def category_slug(category: Optional[str]) -> str:
+def category_slug(category: str | None) -> str:
     normalized = normalize_category(category)
     return CATEGORY_LABEL_TO_SLUG.get(normalized, "shizheng")
 
