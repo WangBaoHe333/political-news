@@ -8,7 +8,7 @@ import random
 import ssl
 from datetime import datetime, timedelta
 from html import unescape
-from typing import Any, Callable, Dict, List, Optional, Tuple, TypedDict, cast
+from typing import Any, Callable, Dict, List, Tuple, TypedDict, cast
 from urllib.error import HTTPError, URLError
 from urllib.parse import urljoin, urlparse
 from urllib.request import Request, urlopen
@@ -746,6 +746,54 @@ def _target_range(year: int | None = None, months: int = 12, start_date: datetim
     return start, now
 
 
+def _fill_item_article(item: Dict[str, Any], article_html: str = "") -> None:
+    """抓取正文并填充 summary/content（article_html 可传入已抓取的 HTML，避免重复请求）。"""
+    if not article_html:
+        try:
+            article_html = _fetch_url(item["link"])
+        except (HTTPError, URLError, TimeoutError, OSError) as exc:
+            logger.warning("Failed to fetch article %s: %s", item["link"], exc)
+            article_html = ""
+    summary, content, detail_date = _parse_article_detail(article_html) if article_html else ("", "", None)
+    if detail_date:
+        item["published_at"] = detail_date
+        item["published"] = detail_date.strftime("%Y-%m-%d")
+    item["summary"] = summary or item["title"]
+    item["content"] = content or summary or item["title"]
+
+
+def _collect_page_items(
+    items: List[Dict[str, Any]],
+    start_date: datetime,
+    end_date: datetime,
+) -> Tuple[List[Dict[str, Any]], datetime | None]:
+    """处理一页候选条目：校验来源、补齐日期、抓正文、过滤。
+
+    返回 (收集到的合规条目, 本页最早日期)。
+    """
+    collected: List[Dict[str, Any]] = []
+    oldest: datetime | None = None
+    for item in items:
+        if not _is_allowed_source_link(item["source"], item["link"]):
+            continue
+        published_at = item["published_at"]
+        if not published_at:
+            published_at = _extract_date_from_url(item["link"])
+            if published_at:
+                item["published_at"] = published_at
+                item["published"] = published_at.strftime("%Y-%m-%d")
+        if not published_at:
+            continue
+        oldest = published_at if oldest is None else min(oldest, published_at)
+        if published_at > end_date or published_at < start_date:
+            continue
+        _fill_item_article(item)
+        if not _is_reliable_item(item):
+            continue
+        collected.append(item)
+    return collected, oldest
+
+
 def fetch_news(year: int | None = None, months: int = 12, max_pages: int | None = None, max_items: int | None = None, start_date: datetime | None = None, end_date: datetime | None = None, progress_callback: Callable[[Dict[str, Any]], None] | None = None) -> List[Dict[str, Any]]:
     max_pages = max_pages or DEFAULT_MAX_PAGES
     max_items = max_items or DEFAULT_MAX_ITEMS
@@ -764,23 +812,23 @@ def fetch_news(year: int | None = None, months: int = 12, max_pages: int | None 
                 return True
         return False
 
+    # 1) 拉取外部源（JSON + RSS + HTML）
     try:
         page_items = _load_json_feed()
     except (HTTPError, URLError, TimeoutError, OSError, json.JSONDecodeError) as exc:
         logger.warning("Failed to fetch json feed %s: %s", LIST_JSON_URL, exc)
         page_items = []
-
     page_items.extend(_load_external_source_feeds(progress_callback=progress_callback))
     page_items.extend(_load_external_html_sources(progress_callback=progress_callback))
 
+    # 2) 处理 feed 条目（缺失日期时先抓一次正文取日期）
     collected: List[Dict[str, Any]] = []
     oldest_seen: datetime | None = None
-
     for item in page_items:
         if not _is_allowed_source_link(item["source"], item["link"]):
             continue
-        article_html = ""
         published_at = item["published_at"]
+        article_html = ""
         if not published_at:
             try:
                 article_html = _fetch_url(item["link"])
@@ -796,27 +844,12 @@ def fetch_news(year: int | None = None, months: int = 12, max_pages: int | None 
             item["published_at"] = published_at
             item["published"] = published_at.strftime("%Y-%m-%d")
 
-        if published_at > end_date:
-            continue
-        if published_at < start_date:
+        if published_at > end_date or published_at < start_date:
             continue
 
         oldest_seen = published_at if oldest_seen is None else min(oldest_seen, published_at)
 
-        if not article_html:
-            try:
-                article_html = _fetch_url(item["link"])
-            except (HTTPError, URLError, TimeoutError, OSError) as exc:
-                logger.warning("Failed to fetch article %s: %s", item["link"], exc)
-                article_html = ""
-
-        summary, content, detail_date = _parse_article_detail(article_html) if article_html else ("", "", None)
-        if detail_date:
-            item["published_at"] = detail_date
-            item["published"] = detail_date.strftime("%Y-%m-%d")
-
-        item["summary"] = summary or item["title"]
-        item["content"] = content or summary or item["title"]
+        _fill_item_article(item, article_html)
         if not _is_reliable_item(item):
             continue
         collected.append(item)
@@ -832,6 +865,7 @@ def fetch_news(year: int | None = None, months: int = 12, max_pages: int | None 
             }
         )
 
+    # 3) 按月归档页补充
     if (oldest_seen is None or oldest_seen > start_date) and len(news_items) < max_items:
         month_pages = _iter_month_list_pages(start_date, end_date, max_index_pages=8)
         month_archive_hit = False
@@ -846,36 +880,7 @@ def fetch_news(year: int | None = None, months: int = 12, max_pages: int | None 
                 continue
             month_archive_hit = True
 
-            page_collected: List[Dict[str, Any]] = []
-            page_oldest: datetime | None = None
-            for item in month_items:
-                if not _is_allowed_source_link(item["source"], item["link"]):
-                    continue
-                published_at = item["published_at"]
-                if not published_at:
-                    published_at = _extract_date_from_url(item["link"])
-                    if published_at:
-                        item["published_at"] = published_at
-                        item["published"] = published_at.strftime("%Y-%m-%d")
-                if not published_at:
-                    continue
-                page_oldest = published_at if page_oldest is None else min(page_oldest, published_at)
-                if published_at > end_date or published_at < start_date:
-                    continue
-                try:
-                    article_html = _fetch_url(item["link"])
-                except (HTTPError, URLError, TimeoutError, OSError):
-                    article_html = ""
-                summary, content, detail_date = _parse_article_detail(article_html) if article_html else ("", "", None)
-                if detail_date:
-                    item["published_at"] = detail_date
-                    item["published"] = detail_date.strftime("%Y-%m-%d")
-                item["summary"] = summary or item["title"]
-                item["content"] = content or summary or item["title"]
-                if not _is_reliable_item(item):
-                    continue
-                page_collected.append(item)
-
+            page_collected, page_oldest = _collect_page_items(month_items, start_date, end_date)
             if progress_callback:
                 progress_callback(
                     {
@@ -896,6 +901,7 @@ def fetch_news(year: int | None = None, months: int = 12, max_pages: int | None 
             news_items.sort(key=lambda item: item["published_at"], reverse=True)
             return news_items
 
+        # 4) 数字分页归档回退
         consecutive_missing_archives = 0
         for page_number in range(1, max_pages + 1):
             archive_url = _build_archive_url(page_number)
@@ -924,43 +930,7 @@ def fetch_news(year: int | None = None, months: int = 12, max_pages: int | None 
                     )
                 continue
 
-            page_collected = []
-            page_oldest = None
-            for item in archive_items:
-                if not _is_allowed_source_link(item["source"], item["link"]):
-                    continue
-                published_at = item["published_at"]
-                if not published_at:
-                    published_at = _extract_date_from_url(item["link"])
-                    if published_at:
-                        item["published_at"] = published_at
-                        item["published"] = published_at.strftime("%Y-%m-%d")
-                if not published_at:
-                    continue
-                page_oldest = published_at if page_oldest is None else min(page_oldest, published_at)
-
-                if published_at > end_date:
-                    continue
-                if published_at < start_date:
-                    continue
-
-                try:
-                    article_html = _fetch_url(item["link"])
-                except (HTTPError, URLError, TimeoutError, OSError) as exc:
-                    logger.warning("Failed to fetch article %s: %s", item["link"], exc)
-                    article_html = ""
-
-                summary, content, detail_date = _parse_article_detail(article_html) if article_html else ("", "", None)
-                if detail_date:
-                    item["published_at"] = detail_date
-                    item["published"] = detail_date.strftime("%Y-%m-%d")
-
-                item["summary"] = summary or item["title"]
-                item["content"] = content or summary or item["title"]
-                if not _is_reliable_item(item):
-                    continue
-                page_collected.append(item)
-
+            page_collected, page_oldest = _collect_page_items(archive_items, start_date, end_date)
             if progress_callback:
                 progress_callback(
                     {
