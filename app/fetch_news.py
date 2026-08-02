@@ -1,3 +1,4 @@
+from __future__ import annotations
 import logging
 import os
 import re
@@ -7,7 +8,7 @@ import random
 import ssl
 from datetime import datetime, timedelta
 from html import unescape
-from typing import Any, Callable, Dict, List, Optional, Tuple
+from typing import Any, Callable, Dict, List, Optional, Tuple, TypedDict, cast
 from urllib.error import HTTPError, URLError
 from urllib.parse import urljoin, urlparse
 from urllib.request import Request, urlopen
@@ -41,7 +42,7 @@ def _people_archive_urls(max_pages: int = 30) -> List[str]:
     return urls
 
 
-CURATED_RSS_SOURCES = [
+CURATED_RSS_SOURCES: List[Dict[str, Any]] = [
     {
         "source": "people_cn",
         "category": "时政",
@@ -92,7 +93,7 @@ CURATED_RSS_SOURCES = [
         "max_entries": 60,
     },
 ]
-CURATED_HTML_SOURCES = [
+CURATED_HTML_SOURCES: List[Dict[str, Any]] = [
     {
         "source": "people_cn",
         "category": "时政",
@@ -155,7 +156,12 @@ CURATED_HTML_SOURCES = [
         "max_entries": 120,
     },
 ]
-TRUSTED_SOURCE_RULES = {
+class _TrustedSourceRule(TypedDict):
+    domains: Tuple[str, ...]
+    min_content_length: int
+
+
+TRUSTED_SOURCE_RULES: Dict[str, _TrustedSourceRule] = {
     "gov_cn": {
         "domains": ("gov.cn",),
         "min_content_length": 18,
@@ -197,7 +203,7 @@ def _hostname_matches(hostname: str | None, allowed_domains: Tuple[str, ...]) ->
 
 
 def _is_allowed_source_link(source: str | None, link: str) -> bool:
-    rule = TRUSTED_SOURCE_RULES.get(source)
+    rule = TRUSTED_SOURCE_RULES.get(source or "")
     if not rule:
         return False
     parsed = urlparse(link)
@@ -215,7 +221,8 @@ def _is_reliable_item(item: Dict[str, Any]) -> bool:
 
     content = _normalize_text(item.get("content") or "")
     summary = _normalize_text(item.get("summary") or "")
-    min_length = TRUSTED_SOURCE_RULES.get(item.get("source"), {}).get("min_content_length", 40)
+    source_rule = TRUSTED_SOURCE_RULES.get(item.get("source") or "")
+    min_length = source_rule["min_content_length"] if source_rule else 40
     return len(content) >= min_length or len(summary) >= min_length
 
 
@@ -226,7 +233,7 @@ def _fetch_url(url: str) -> str:
         try:
             request = Request(url, headers={"User-Agent": "political-news/1.0"})
             with urlopen(request, timeout=HTTP_TIMEOUT, context=context) as response:
-                return response.read().decode("utf-8", errors="ignore")
+                return cast(str, response.read().decode("utf-8", errors="ignore"))
         except (HTTPError, URLError, TimeoutError, OSError) as exc:
             last_error = exc
             if attempt >= HTTP_RETRIES:
@@ -296,6 +303,8 @@ def _extract_date(text: str | None) -> datetime | None:
                 # DD Mon YYYY
                 day, month_str, year = int(groups[0]), groups[1], int(groups[2])
                 month = month_map.get(month_str.capitalize())
+                if month is None:
+                    continue
             else:
                 # YYYY-MM-DD 或中文日期
                 year, month, day = int(groups[0]), int(groups[1]), int(groups[2])
@@ -390,7 +399,7 @@ def _parse_generic_list_page(html_text: str, page_url: str, source_config: Dict[
         return None
 
     for anchor in soup.find_all("a", href=True):
-        href = urljoin(page_url, anchor["href"])
+        href = urljoin(page_url, cast(str, anchor["href"]))
         title = _normalize_text(anchor.get_text(" ", strip=True))
         if len(title) < 8 or href in seen_links:
             continue
@@ -457,7 +466,7 @@ def _parse_list_page(html_text: str, page_url: str) -> List[Dict[str, Any]]:
         return None
 
     for anchor in soup.find_all("a", href=True):
-        href = urljoin(page_url, anchor["href"])
+        href = urljoin(page_url, cast(str, anchor["href"]))
         title = _normalize_text(anchor.get_text(" ", strip=True))
         if "content_" not in href or not title or href in seen_links:
             continue
@@ -704,26 +713,26 @@ def _parse_article_detail(html_text: str) -> Tuple[str, str, datetime | None]:
     if not blocks:
         blocks = soup.find_all("p")
 
-    paragraphs: List[str] = []
+    paragraph_texts: List[str] = []
     for block in blocks:
         text = _normalize_text(block.get_text(" ", strip=True))
         if len(text) < 10:
             continue
         if any(token in text for token in ["责任编辑", "扫一扫", "打印", "关闭窗口"]):
             continue
-        paragraphs.append(text)
+        paragraph_texts.append(text)
 
     # 站内只保留导读与有限节选，避免直接镜像原站全文。
     content_parts: List[str] = []
     total_chars = 0
-    for paragraph in paragraphs[:8]:
+    for paragraph in paragraph_texts[:8]:
         total_chars += len(paragraph)
         if total_chars > 1200:
             break
         content_parts.append(paragraph)
 
     content = "\n".join(content_parts)
-    summary = paragraphs[0] if paragraphs else ""
+    summary = paragraph_texts[0] if paragraph_texts else ""
     return summary, content, published_at
 
 
@@ -916,7 +925,7 @@ def fetch_news(year: int | None = None, months: int = 12, max_pages: int | None 
                 continue
 
             page_collected = []
-            page_oldest: datetime | None = None
+            page_oldest = None
             for item in archive_items:
                 if not _is_allowed_source_link(item["source"], item["link"]):
                     continue

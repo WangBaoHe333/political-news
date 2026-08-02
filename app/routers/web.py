@@ -1,5 +1,7 @@
 """时政资料库 Web 页面。"""
 
+from __future__ import annotations
+
 from collections import OrderedDict
 from datetime import datetime
 from html import escape
@@ -14,6 +16,7 @@ from fastapi import APIRouter, Query
 from fastapi.responses import HTMLResponse, RedirectResponse
 
 from app.config import get_settings
+from app.models import News
 from app.news_data import (
     CATEGORY_DEFINITIONS,
     category_from_slug,
@@ -85,7 +88,7 @@ def _source_hostname(link: str) -> str:
     return hostname.removeprefix("www.")
 
 
-def _render_source_signature(item) -> str:
+def _render_source_signature(item: News) -> str:
     source = escape(source_label(item.source))
     category = escape(category_label(getattr(item, "category", None)))
     trust = escape(source_trust_label(item.source))
@@ -143,7 +146,7 @@ def _render_pager(path: str, current_page: int, total_pages: int, **params: Opti
     return "<nav class='pager'>" + "".join(links) + "</nav>"
 
 
-def _render_news_card(item, keyword: Optional[str] = None) -> str:
+def _render_news_card(item: News, keyword: Optional[str] = None) -> str:
     title = _highlight_text(item.title, keyword)
     link = escape(item.link)
     published = escape(item.published or item.published_at.strftime("%Y-%m-%d"))
@@ -162,7 +165,7 @@ def _render_news_card(item, keyword: Optional[str] = None) -> str:
     )
 
 
-def _render_news_stream(items, empty_text: str, keyword: Optional[str] = None) -> str:
+def _render_news_stream(items: Sequence[News], empty_text: str, keyword: Optional[str] = None) -> str:
     if not items:
         return f"<div class='empty-state'>{escape(empty_text)}</div>"
     return "".join(_render_news_card(item, keyword=keyword) for item in items)
@@ -200,7 +203,7 @@ def _render_category_shelves(items: Sequence, limit_categories: int = 4, per_cat
     return "".join(sections)
 
 
-def _render_recent_updates(items, empty_text: str) -> str:
+def _render_recent_updates(items: Sequence[News], empty_text: str) -> str:
     if not items:
         return f"<div class='empty-state'>{escape(empty_text)}</div>"
 
@@ -314,7 +317,7 @@ def _render_year_grid(year_counts: Dict[int, int], current_year: int) -> str:
     return "<div class='year-grid'>" + "".join(cards) + "</div>"
 
 
-def _render_source_grid(source_counts: Dict[str, int], active_source: Optional[str], path: str, **params) -> str:
+def _render_source_grid(source_counts: Dict[str, int], active_source: Optional[str], path: str, **params: object) -> str:
     if not source_counts and not active_source:
         return "<div class='empty-state'>当前还没有可展示的来源分布。</div>"
 
@@ -403,7 +406,7 @@ def _render_sync_panel(task_status: Dict[str, object], last_sync_at: str, last_s
     """
 
 
-def _render_article_body(item) -> str:
+def _render_article_body(item: News) -> str:
     content = (item.content or "").strip()
     summary = (item.summary or "").strip()
     body_text = content or summary
@@ -1285,11 +1288,11 @@ def _render_layout(
 def _shared_sidebar(
     year_counts: Dict[int, int],
     current_year: int,
-    recent_items,
+    recent_items: Sequence[News],
     source_counts: Dict[str, int],
     source_path: str,
     active_source: Optional[str] = None,
-    **source_params,
+    **source_params: object,
 ) -> str:
     return (
         "<section class='panel'>"
@@ -1303,7 +1306,7 @@ def _shared_sidebar(
 async def latest_page(
     page: int = Query(default=1, ge=1),
     source: Optional[str] = Query(default=None),
-):
+) -> RedirectResponse:
     return RedirectResponse(url=_build_href("/archive", page=page, source=source), status_code=302)
 
 
@@ -1312,7 +1315,7 @@ async def latest_page(
 async def today_page(
     page: int = Query(default=1, ge=1),
     source: Optional[str] = Query(default=None),
-):
+) -> HTMLResponse:
     current_year = datetime.now(LOCAL_TZ).year
     all_recent_items, _ = query_news(year=None, search=None, months=24)
     source_counts = _source_counts(all_recent_items)
@@ -1368,7 +1371,7 @@ async def today_page(
 async def yesterday_page(
     page: int = Query(default=1, ge=1),
     source: Optional[str] = Query(default=None),
-):
+) -> HTMLResponse:
     current_year = datetime.now(LOCAL_TZ).year
     all_recent_items, _ = query_news(year=None, search=None, months=24)
     source_counts = _source_counts(all_recent_items)
@@ -1418,7 +1421,7 @@ async def categories_page(
     page: int = Query(default=1, ge=1),
     source: Optional[str] = Query(default=None),
     category: str = Query(default="shizheng"),
-):
+) -> HTMLResponse:
     current_year = datetime.now(LOCAL_TZ).year
     all_items, _ = query_news(year=None, search=None, months=24, source=source)
     source_counts = _source_counts(all_items)
@@ -1475,7 +1478,7 @@ async def category_detail_page(
     slug: str,
     page: int = Query(default=1, ge=1),
     source: Optional[str] = Query(default=None),
-):
+) -> HTMLResponse:
     current_year = datetime.now(LOCAL_TZ).year
     category_name = category_from_slug(slug)
     all_items, _ = query_news(year=None, search=None, months=24, source=source, category=category_name)
@@ -1521,7 +1524,7 @@ async def category_detail_page(
 
 
 @router.get("/sources", response_class=HTMLResponse)
-async def sources_page():
+async def sources_page() -> HTMLResponse:
     current_year = datetime.now(LOCAL_TZ).year
     recent_items, _ = query_news(year=None, search=None, months=24)
     source_counts = _source_counts(recent_items)
@@ -1559,7 +1562,7 @@ async def sources_page():
 async def source_detail_page(
     source: str,
     page: int = Query(default=1, ge=1),
-):
+) -> HTMLResponse:
     current_year = datetime.now(LOCAL_TZ).year
     all_items, _ = query_news(year=None, search=None, months=24, source=source)
     page_items, current_page, total_pages = _paginate_sequence(all_items, page, ITEMS_PER_PAGE)
@@ -1607,7 +1610,7 @@ async def source_detail_page(
 async def archive_page(
     page: int = Query(default=1, ge=1),
     source: Optional[str] = Query(default=None),
-):
+) -> HTMLResponse:
     current_year = datetime.now(LOCAL_TZ).year
     all_recent_items, _ = query_news(year=None, search=None, months=24)
     source_counts = _source_counts(all_recent_items)
@@ -1656,7 +1659,7 @@ async def archive_page(
 
 
 @router.get("/years", response_class=HTMLResponse)
-async def years_page():
+async def years_page() -> HTMLResponse:
     current_year = datetime.now(LOCAL_TZ).year
     year_counts = get_year_counts(min_year=MIN_FILTER_YEAR)
     recent_items, _ = query_news(year=None, search=None, months=24)
@@ -1700,7 +1703,7 @@ async def year_detail_page(
     year: int,
     page: int = Query(default=1, ge=1),
     source: Optional[str] = Query(default=None),
-):
+) -> HTMLResponse:
     current_year = datetime.now(LOCAL_TZ).year
     all_items, _ = query_news(year=year, search=None, months=None)
     source_counts = _source_counts(all_items)
@@ -1751,7 +1754,7 @@ async def search_page(
     year: Optional[int] = Query(default=None),
     source: Optional[str] = Query(default=None),
     page: int = Query(default=1, ge=1),
-):
+) -> HTMLResponse:
     current_year = datetime.now(LOCAL_TZ).year
     keyword = (q or "").strip()
     search_year = year or current_year
@@ -1834,7 +1837,7 @@ async def search_page(
 
 
 @router.get("/news/{news_id}", response_class=HTMLResponse)
-async def news_detail_page(news_id: int):
+async def news_detail_page(news_id: int) -> HTMLResponse:
     item = get_news_by_id(news_id)
     if item is None:
         return HTMLResponse(
@@ -1910,7 +1913,7 @@ async def news_detail_page(news_id: int):
 
 
 @router.get("/status", response_class=HTMLResponse)
-async def status_page(sync_status: str = Query(default="")):
+async def status_page(sync_status: str = Query(default="")) -> HTMLResponse:
     current_year = datetime.now(LOCAL_TZ).year
     year_counts = get_year_counts(min_year=MIN_FILTER_YEAR)
     recent_items, _ = query_news(year=None, search=None, months=24)

@@ -1,9 +1,10 @@
+from __future__ import annotations
 from apscheduler.schedulers.background import BackgroundScheduler
 
 from app.config import get_settings
 
 
-def setup_scheduler():
+def setup_scheduler() -> BackgroundScheduler:
     settings = get_settings()
     scheduler = BackgroundScheduler(timezone=settings.scheduled_sync_timezone)
     scheduler.add_job(

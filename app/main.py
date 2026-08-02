@@ -1,7 +1,10 @@
 """FastAPI 应用入口。"""
 
+from __future__ import annotations
+
 import logging
 from contextlib import asynccontextmanager
+from typing import AsyncIterator
 
 from fastapi import FastAPI
 
@@ -22,7 +25,7 @@ logger = logging.getLogger(__name__)
 
 
 @asynccontextmanager
-async def lifespan(app: FastAPI):
+async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     init_db()
     reset_stale_sync_state()
     scheduler = setup_scheduler()

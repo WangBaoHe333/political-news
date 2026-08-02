@@ -1,5 +1,7 @@
 """新闻查询与列表结构（供页面与 API 共用）。"""
 
+from __future__ import annotations
+
 from collections import OrderedDict
 from datetime import datetime, timedelta
 from typing import Any, Dict, List, Optional, Tuple

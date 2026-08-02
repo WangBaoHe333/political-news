@@ -1,5 +1,7 @@
 """抓取入库与后台同步任务状态。"""
 
+from __future__ import annotations
+
 import json
 import logging
 import threading
@@ -74,8 +76,10 @@ def _update_source_health(events: List[Dict[str, Any]]) -> None:
         errors = int(event.get("errors") or 0)
         channel = str(event.get("channel") or "")
 
-        previous_item = current.get(source) if isinstance(current.get(source), dict) else {}
-        previous_failures = int(previous_item.get("consecutive_failures") or 0)
+        raw_previous = current.get(source)
+        if not isinstance(raw_previous, dict):
+            raw_previous = {}
+        previous_failures = int(raw_previous.get("consecutive_failures") or 0)
         consecutive_failures = 0 if status == "healthy" else previous_failures + 1
 
         current[source] = {
