@@ -56,4 +56,7 @@ Thumbs.db
 data/
 temp/
 tmp/
-uploads/.venv313
+uploads/
+
+# 虚拟环境（其他）
+.venv313
