@@ -1,7 +1,15 @@
-import pytest
 import os
 import sys
-from fastapi.testclient import TestClient
+import warnings
+
+import pytest
+
+# 新版 starlette 在导入 testclient 时会发出弃用警告，而项目 pytest 配置将警告视为错误。
+# 这里只屏蔽该次导入期间的警告，避免因依赖版本漂移导致测试收集失败。
+with warnings.catch_warnings():
+    warnings.simplefilter("ignore")
+    from fastapi.testclient import TestClient
+
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy import create_engine
 
