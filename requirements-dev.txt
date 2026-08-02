@@ -1,26 +1,26 @@
-# 开发依赖 (也可以通过 pip install -e ".[dev]" 安装)
-# 此文件为向后兼容，推荐使用 pyproject.toml 管理依赖
+# 开发依赖（已锁定版本，避免依赖升级破坏 CI）
+# 也可以通过 pip install -e ".[dev]" 安装
 
 # 测试
-pytest>=7.4.0
-pytest-cov>=4.1.0
-pytest-asyncio>=0.21.0
-httpx>=0.25.0
+pytest==9.1.1
+pytest-cov==7.1.0
+pytest-asyncio==1.4.0
+httpx==0.28.1
 
 # 代码质量和格式化
-black>=23.0.0
-isort>=5.12.0
-flake8>=6.1.0
-mypy>=1.6.0
+black==26.5.1
+isort==8.0.1
+flake8==7.3.0
+mypy==2.3.0
 
 # 安全
-bandit>=1.7.0
-safety>=2.3.0
+bandit==1.9.4
+safety==3.8.1
 
 # 开发工具
-pre-commit>=3.5.0
+pre-commit==4.6.1
 
 # 测试工具（可选）
-factory-boy>=3.3.0
-Faker>=18.0.0
-freezegun>=1.2.0
+factory-boy==3.3.3
+Faker==40.36.0
+freezegun==1.5.5

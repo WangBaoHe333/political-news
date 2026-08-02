@@ -1,5 +1,5 @@
 # 使用官方Python镜像
-FROM python:3.9-slim as builder
+FROM python:3.13-slim as builder
 
 # 设置工作目录
 WORKDIR /app
@@ -19,7 +19,7 @@ RUN pip install --no-cache-dir --upgrade pip && \
     pip install --no-cache-dir -r requirements.txt
 
 # 生产阶段
-FROM python:3.9-slim
+FROM python:3.13-slim
 
 # 健康检查与部分运维命令需要 curl（最终镜像在 HEALTHCHECK 中使用）
 RUN apt-get update && apt-get install -y --no-install-recommends curl \

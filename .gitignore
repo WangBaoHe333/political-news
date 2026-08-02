@@ -56,4 +56,4 @@ Thumbs.db
 data/
 temp/
 tmp/
-uploads/
+uploads/.venv313

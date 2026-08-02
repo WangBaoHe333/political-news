@@ -1,7 +1,8 @@
-fastapi
-uvicorn
-apscheduler
-feedparser
-sqlalchemy
-psycopg2-binary
-beautifulsoup4
+# 运行依赖（已锁定版本，避免依赖升级破坏构建）
+fastapi==0.141.1
+uvicorn==0.52.1
+apscheduler==3.11.3
+feedparser==6.0.14
+sqlalchemy==2.0.51
+psycopg2-binary==2.9.12
+beautifulsoup4==4.15.0
