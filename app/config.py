@@ -8,6 +8,12 @@ def _truthy_env(name: str, default: str = "0") -> bool:
     return os.getenv(name, default).lower() in {"1", "true", "yes", "on"}
 
 
+def _normalize_base_path(value: str) -> str:
+    """规范化 BASE_PATH：去首尾空白和末尾斜杠，空/根返回空串。"""
+    value = (value or "").strip().rstrip("/")
+    return value
+
+
 @dataclass(frozen=True)
 class Settings:
     auto_sync_on_startup: bool
@@ -16,6 +22,7 @@ class Settings:
     scheduled_sync_interval_hours: int
     scheduled_sync_timezone: str
     expose_api_docs: bool
+    base_path: str
 
 
 def get_settings() -> Settings:
@@ -27,4 +34,5 @@ def get_settings() -> Settings:
         scheduled_sync_timezone=os.getenv("SCHEDULED_SYNC_TIMEZONE", "Asia/Shanghai").strip()
         or "Asia/Shanghai",
         expose_api_docs=_truthy_env("EXPOSE_API_DOCS", "1"),
+        base_path=_normalize_base_path(os.getenv("BASE_PATH", "")),
     )

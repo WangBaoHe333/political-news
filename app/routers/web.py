@@ -17,6 +17,9 @@ from fastapi.responses import HTMLResponse, RedirectResponse
 
 from app.config import get_settings
 from app.models import News
+
+# 子路径部署前缀（如 /news），由环境变量 BASE_PATH 提供
+BASE_PATH = get_settings().base_path
 from app.news_data import (
     CATEGORY_DEFINITIONS,
     category_from_slug,
@@ -128,9 +131,10 @@ def _paginate_sequence(items: Sequence, page: int, page_size: int) -> Tuple[Sequ
 
 def _build_href(path: str, **params: Optional[object]) -> str:
     clean = {key: value for key, value in params.items() if value not in (None, "", False)}
+    prefixed = f"{BASE_PATH}{path}"
     if not clean:
-        return path
-    return f"{path}?{urlencode(clean)}"
+        return prefixed
+    return f"{prefixed}?{urlencode(clean)}"
 
 
 def _render_pager(path: str, current_page: int, total_pages: int, **params: Optional[object]) -> str:
@@ -167,10 +171,10 @@ def _render_news_card(item: News, keyword: Optional[str] = None) -> str:
         "<article class='news-card'>"
         f"<div class='news-meta'><span>{published}</span><span>站内阅读</span></div>"
         f"{_render_source_signature(item)}"
-        f"<h4><a href='/news/{item.id}'>{title}</a></h4>"
+        f"<h4><a href='{BASE_PATH}/news/{item.id}'>{title}</a></h4>"
         f"<p>{excerpt}</p>"
         "<div class='card-actions'>"
-        f"<a class='inline-link' href='/news/{item.id}'>站内阅读</a>"
+        f"<a class='inline-link' href='{BASE_PATH}/news/{item.id}'>站内阅读</a>"
         f"<a class='inline-link' href='{link}' target='_blank' rel='noreferrer'>原站原文</a>"
         "</div>"
         "</article>"
@@ -202,7 +206,7 @@ def _render_category_shelves(items: Sequence, limit_categories: int = 4, per_cat
             "<section class='panel'>"
             "<div class='panel-head'>"
             f"<div><h2>{escape(label)}</h2><div class='panel-subtitle'>按专题聚合近两年内容，减少用户在不同站点之间来回跳。</div></div>"
-            f"<a class='inline-link' href='/category/{slug}'>进入专题</a>"
+            f"<a class='inline-link' href='{BASE_PATH}/category/{slug}'>进入专题</a>"
             "</div>"
             + _render_scroll_shell(
                 "".join(_render_news_card(item) for item in bucket[:per_category]),
@@ -225,7 +229,7 @@ def _render_recent_updates(items: Sequence[News], empty_text: str) -> str:
         blocks.append(
             "<article class='mini-card'>"
             f"<div class='mini-date'>{published} · {escape(source_label(item.source))}</div>"
-            f"<h4><a href='/news/{item.id}'>{escape(item.title)}</a></h4>"
+            f"<h4><a href='{BASE_PATH}/news/{item.id}'>{escape(item.title)}</a></h4>"
             f"<p>{escape((item.summary or item.content or item.title or '')[:110])}</p>"
             "</article>"
         )
@@ -307,7 +311,7 @@ def _render_source_overview(source_counts: Dict[str, int]) -> str:
             "<a class='category-card source-card' href='{}'>"
             "<strong>{}</strong>"
             "<span>{} 条</span>"
-            "</a>".format(f"/source/{source}", escape(source_label(source)), count)
+            "</a>".format(_build_href(f"/source/{source}"), escape(source_label(source)), count)
         )
     return "<div class='category-grid'>" + "".join(cards) + "</div>"
 
@@ -376,16 +380,16 @@ def _render_sync_panel(task_status: Dict[str, object], last_sync_at: str, last_s
     action_html = (
         """
       <div class="actions compact-actions">
-        <form method="get" action="/sync-view">
+        <form method="get" action="{BASE_PATH}/sync-view">
           <input type="hidden" name="months" value="24" />
           <button type="submit">同步近两年到数据库</button>
         </form>
-        <form method="get" action="/sync-view">
+        <form method="get" action="{BASE_PATH}/sync-view">
           <input type="hidden" name="year" value="{current_year}" />
           <button type="submit">同步本年</button>
         </form>
       </div>
-        """.format(current_year=datetime.now(LOCAL_TZ).year)
+        """.format(BASE_PATH=BASE_PATH, current_year=datetime.now(LOCAL_TZ).year)
         if not sync_admin_token
         else """
       <div class="notice compact">
@@ -540,7 +544,7 @@ def _render_nav(active_tab: str) -> str:
     links = []
     for key, href, label in tabs:
         class_name = "nav-link active" if key == active_tab else "nav-link"
-        links.append(f"<a class='{class_name}' href='{href}'>{label}</a>")
+        links.append(f"<a class='{class_name}' href='{BASE_PATH}{href}'>{label}</a>")
     return "".join(links)
 
 
@@ -1249,7 +1253,7 @@ def _render_layout(
           <div class="nav-row">{_render_nav(active_tab)}</div>
 
           <div class="toolbar">
-            <form method="get" action="/search" class="search-form">
+            <form method="get" action="{BASE_PATH}/search" class="search-form">
               <input type="search" name="q" value="{escape(search_query)}" placeholder="搜索标题、正文或日期，例如 2025-03、2026-04-11" />
               <select name="year">{_render_year_select(year_counts, current_year, selected_year)}</select>
               <button type="submit">搜索</button>
