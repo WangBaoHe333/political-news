@@ -21,6 +21,10 @@ SOURCE_LABELS = {
     "chinanews": "中国新闻网",
     "cctv": "央视网",
     "mfa": "外交部",
+    "qstheory": "求是网",
+    "gmw": "光明网",
+    "ce": "经济日报",
+    "dangyuan": "共产党员网",
     "sina": "新浪新闻",
 }
 SOURCE_TRUST_LABELS = {
@@ -30,6 +34,10 @@ SOURCE_TRUST_LABELS = {
     "chinanews": "主流媒体",
     "cctv": "央媒报道",
     "mfa": "部委发布",
+    "qstheory": "央媒报道",
+    "gmw": "央媒报道",
+    "ce": "央媒报道",
+    "dangyuan": "主流媒体",
     "sina": "转载来源",
 }
 SOURCE_TRUST_NOTES = {
@@ -39,6 +47,10 @@ SOURCE_TRUST_NOTES = {
     "chinanews": "中国新闻网中国频道原文或 RSS，同步后保留原文链接。",
     "cctv": "央视网新闻频道公开发布内容，适合补足权威电视媒体口径。",
     "mfa": "外交部官网公开发布内容，适合补足外交与外事动态。",
+    "qstheory": "求是网（中共中央机关刊）理论文章，公考时政高频内容。",
+    "gmw": "光明日报社主办网站，补足综合央媒与文化教育视角。",
+    "ce": "经济日报社主办网站，补足宏观经济时政视角。",
+    "dangyuan": "共产党员网，补足党建、组织工作与制度类时政。",
     "sina": "仅作历史兼容展示，新同步流程默认不再纳入。",
 }
 CATEGORY_DEFINITIONS = OrderedDict(

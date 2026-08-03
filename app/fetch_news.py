@@ -155,6 +155,54 @@ CURATED_HTML_SOURCES: List[Dict[str, Any]] = [
         "article_patterns": (".shtml",),
         "max_entries": 120,
     },
+    {
+        "source": "qstheory",
+        "category": "时政",
+        "list_urls": [
+            "https://www.qstheory.cn/",
+            "https://www.qstheory.cn/politics/index.htm",
+            "https://www.qstheory.cn/economy/index.htm",
+        ],
+        "base_url": "https://www.qstheory.cn/",
+        "link_keywords": ("/c.html",),
+        "article_patterns": ("/c.html",),
+        "max_entries": 60,
+    },
+    {
+        "source": "gmw",
+        "category": "时政",
+        "list_urls": [
+            "https://www.gmw.cn/",
+        ],
+        "base_url": "https://www.gmw.cn/",
+        "link_keywords": ("/content_",),
+        "article_patterns": (".htm",),
+        "max_entries": 60,
+    },
+    {
+        "source": "ce",
+        "category": "时政",
+        "list_urls": [
+            "http://www.ce.cn/xwzx/gnsz/gdxw/index.shtml",
+            "http://www.ce.cn/xwzx/gnsz/szyw/index.shtml",
+        ],
+        "base_url": "http://www.ce.cn/",
+        "link_keywords": ("/t20",),
+        "article_patterns": (".shtml",),
+        "max_entries": 60,
+    },
+    {
+        "source": "dangyuan",
+        "category": "时政",
+        "list_urls": [
+            "https://news.12371.cn/dzybmbdj/zzb/ldhd/",
+            "https://news.12371.cn/dzybmbdj/zzb/gzdt/",
+        ],
+        "base_url": "https://www.12371.cn/",
+        "link_keywords": ("/ARTI",),
+        "article_patterns": (".shtml",),
+        "max_entries": 60,
+    },
 ]
 class _TrustedSourceRule(TypedDict):
     domains: Tuple[str, ...]
@@ -184,6 +232,22 @@ TRUSTED_SOURCE_RULES: Dict[str, _TrustedSourceRule] = {
     },
     "mfa": {
         "domains": ("mfa.gov.cn",),
+        "min_content_length": 18,
+    },
+    "qstheory": {
+        "domains": ("qstheory.cn",),
+        "min_content_length": 18,
+    },
+    "gmw": {
+        "domains": ("gmw.cn",),
+        "min_content_length": 18,
+    },
+    "ce": {
+        "domains": ("ce.cn",),
+        "min_content_length": 18,
+    },
+    "dangyuan": {
+        "domains": ("12371.cn",),
         "min_content_length": 18,
     },
 }
