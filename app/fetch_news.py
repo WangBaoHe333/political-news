@@ -39,9 +39,10 @@ LOCAL_TZ = ZoneInfo("Asia/Shanghai")
 
 
 def _people_archive_urls(max_pages: int = 30) -> List[str]:
-    urls = ["https://politics.people.com.cn/GB/1024/index.html"]
+    # 注意：politics.people.com.cn 的 https 证书与域名不匹配，必须用 http 才能正常抓取
+    urls = ["http://politics.people.com.cn/GB/1024/index.html"]
     for idx in range(2, max_pages + 1):
-        urls.append(f"https://politics.people.com.cn/GB/1024/index{idx}.html")
+        urls.append(f"http://politics.people.com.cn/GB/1024/index{idx}.html")
     return urls
 
 

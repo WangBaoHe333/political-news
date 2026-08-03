@@ -90,9 +90,9 @@ def test_iter_month_list_pages_builds_month_directories():
 
 def test_people_archive_urls_build_expected_pages():
     urls = _people_archive_urls(5)
-    assert urls[0] == "https://politics.people.com.cn/GB/1024/index.html"
-    assert "https://politics.people.com.cn/GB/1024/index2.html" in urls
-    assert "https://politics.people.com.cn/GB/1024/index5.html" in urls
+    assert urls[0] == "http://politics.people.com.cn/GB/1024/index.html"
+    assert "http://politics.people.com.cn/GB/1024/index2.html" in urls
+    assert "http://politics.people.com.cn/GB/1024/index5.html" in urls
 
 
 @patch("app.fetch_news._fetch_url")
