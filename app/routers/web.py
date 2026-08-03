@@ -41,7 +41,18 @@ LOCAL_TZ = ZoneInfo("Asia/Shanghai")
 MIN_FILTER_YEAR = 2025
 ITEMS_PER_PAGE = 8
 MONTHS_PER_PAGE = 3
-TRUSTED_SOURCE_ORDER = ("gov_cn", "people_cn", "xinhuanet", "cctv", "mfa", "chinanews")
+TRUSTED_SOURCE_ORDER = (
+    "gov_cn",
+    "people_cn",
+    "xinhuanet",
+    "cctv",
+    "mfa",
+    "chinanews",
+    "qstheory",
+    "gmw",
+    "ce",
+    "dangyuan",
+)
 
 
 def _filter_items_by_source(items: Sequence, selected_source: Optional[str]) -> List:
