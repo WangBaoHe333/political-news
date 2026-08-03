@@ -921,6 +921,8 @@ def fetch_news(year: int | None = None, months: int = 12, max_pages: int | None 
             continue
         collected.append(item)
 
+    # 混洗收集的条目，让 max_items 上限均摊到各来源，避免被 gov.cn JSON 源占满、饿死外部新源
+    random.shuffle(collected)
     append_items(collected)
     if progress_callback:
         progress_callback(
