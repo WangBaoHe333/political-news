@@ -32,6 +32,7 @@ from app.news_data import (
     today_news,
     yesterday_news,
 )
+from app.search_index import get_hot_keywords
 from app.sync_service import get_app_state, get_sync_status
 
 router = APIRouter(tags=["页面"])
@@ -492,6 +493,26 @@ def _render_source_health_panel(items: Sequence) -> str:
         "<div class='panel-head'><div><h2>来源覆盖</h2><div class='panel-subtitle'>这里帮助你快速判断哪一路数据断流了、哪一路还是新鲜的。</div></div></div>"
         + "".join(cards)
         + "</section>"
+    )
+
+
+def _render_hot_keywords() -> str:
+    """搜索页侧边栏：近期高频热词，点击即搜索。"""
+    try:
+        keywords = get_hot_keywords(limit=20)
+    except Exception:
+        keywords = []
+    if not keywords:
+        return ""
+    chips = "".join(
+        f"<a class='helper-chip' href='{_build_href('/search', q=kw)}'>{escape(kw)}</a>"
+        for kw in keywords
+    )
+    return (
+        "<section class='panel'>"
+        "<div class='panel-head'><div><h2>近期热词</h2><div class='panel-subtitle'>最近 60 天标题里出现最多的话题，点击即可搜索。</div></div></div>"
+        f"<div class='helper-list'>{chips}</div>"
+        "</section>"
     )
 
 
@@ -1802,6 +1823,7 @@ async def search_page(
         "<span class='helper-chip'>例：2026-04-11</span>"
         "</div>"
         "</section>"
+        + _render_hot_keywords()
         + _shared_sidebar(
             year_counts,
             current_year,

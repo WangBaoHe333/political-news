@@ -2,15 +2,20 @@
 
 from __future__ import annotations
 
+import logging
 from collections import OrderedDict
 from datetime import datetime, timedelta
 from typing import Any, Dict, List, Optional, Tuple
 from zoneinfo import ZoneInfo
 
 from sqlalchemy import func, or_
+from sqlalchemy.exc import OperationalError
 
 from app.database import SessionLocal
 from app.models import News
+from app.search_index import search_rowids
+
+logger = logging.getLogger(__name__)
 
 LOCAL_TZ = ZoneInfo("Asia/Shanghai")
 
@@ -108,9 +113,17 @@ def query_news(
             start_date = datetime.now(LOCAL_TZ).replace(tzinfo=None) - timedelta(days=max(months, 1) * 30)
             query = query.filter(News.published_at >= start_date)
 
-        search_filter = _build_search_filter(search or "")
-        if search_filter is not None:
-            query = query.filter(search_filter)
+        search_text = (search or "").strip()
+        if search_text:
+            try:
+                rowids = search_rowids(db, search_text)
+                query = query.filter(News.id.in_(rowids))
+            except OperationalError:
+                # FTS 索引不可用（如测试环境）时回退到 LIKE 模糊搜索
+                logger.warning("FTS 检索不可用，回退到 LIKE 搜索")
+                fallback = _build_search_filter(search_text)
+                if fallback is not None:
+                    query = query.filter(fallback)
 
         if source:
             query = query.filter(News.source == source)

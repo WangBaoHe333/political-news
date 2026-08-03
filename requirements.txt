@@ -6,3 +6,4 @@ feedparser==6.0.14
 sqlalchemy==2.0.51
 psycopg2-binary==2.9.12
 beautifulsoup4==4.15.0
+jieba==0.42.1

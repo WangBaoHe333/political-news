@@ -17,8 +17,11 @@ from zoneinfo import ZoneInfo
 from bs4 import BeautifulSoup
 import feedparser
 
+from sqlalchemy.exc import OperationalError
+
 from app.database import SessionLocal
 from app.models import News
+from app.search_index import index_news
 
 logger = logging.getLogger(__name__)
 
@@ -1032,25 +1035,35 @@ def save_news_to_db(news_items: List[Dict[str, Any]]) -> int:
                 existing_news.month = item["published_at"].month
                 existing_news.source = item["source"]
                 existing_news.category = item["category"]
+                _index_news_safely(db, existing_news.id, item)
                 continue
 
-            db.add(
-                News(
-                    source=item["source"],
-                    category=item["category"],
-                    title=item["title"],
-                    link=item["link"],
-                    summary=item["summary"],
-                    content=item["content"],
-                    published=item["published"],
-                    published_at=item["published_at"],
-                    year=item["published_at"].year,
-                    month=item["published_at"].month,
-                )
+            news = News(
+                source=item["source"],
+                category=item["category"],
+                title=item["title"],
+                link=item["link"],
+                summary=item["summary"],
+                content=item["content"],
+                published=item["published"],
+                published_at=item["published_at"],
+                year=item["published_at"].year,
+                month=item["published_at"].month,
             )
+            db.add(news)
+            db.flush()
+            _index_news_safely(db, news.id, item)
             saved_count += 1
 
         db.commit()
         return saved_count
     finally:
         db.close()
+
+
+def _index_news_safely(db: Any, news_id: int, item: Dict[str, Any]) -> None:
+    """写入 FTS 索引；索引表不可用时降级跳过，不阻断入库。"""
+    try:
+        index_news(db, news_id, item["title"], item["summary"], item["content"])
+    except OperationalError:
+        logger.warning("FTS 索引不可用，跳过索引（news_id=%s）", news_id)
